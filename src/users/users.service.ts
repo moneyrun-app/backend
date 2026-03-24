@@ -69,7 +69,11 @@ export class UsersService {
       .single();
 
     if (error) {
-      this.logger.error(`온보딩 저장 실패: ${error.message}`, undefined, 'UsersService');
+      this.logger.error(
+        `온보딩 저장 실패: ${error.message}`,
+        undefined,
+        'UsersService',
+      );
       throw error;
     }
 
@@ -93,12 +97,18 @@ export class UsersService {
       .maybeSingle();
 
     if (error) {
-      this.logger.error(`프로필 조회 실패: ${error.message}`, undefined, 'UsersService');
+      this.logger.error(
+        `프로필 조회 실패: ${error.message}`,
+        undefined,
+        'UsersService',
+      );
       throw error;
     }
 
     if (!data) {
-      throw new NotFoundException('프로필을 찾을 수 없습니다. 온보딩을 먼저 완료해주세요.');
+      throw new NotFoundException(
+        '프로필을 찾을 수 없습니다. 온보딩을 먼저 완료해주세요.',
+      );
     }
 
     return data as Record<string, unknown>;
@@ -137,7 +147,11 @@ export class UsersService {
       .single();
 
     if (error) {
-      this.logger.error(`프로필 수정 실패: ${error.message}`, undefined, 'UsersService');
+      this.logger.error(
+        `프로필 수정 실패: ${error.message}`,
+        undefined,
+        'UsersService',
+      );
       throw error;
     }
 
@@ -182,7 +196,11 @@ export class UsersService {
       .single();
 
     if (error) {
-      this.logger.error(`예산 설정 실패: ${error.message}`, undefined, 'UsersService');
+      this.logger.error(
+        `예산 설정 실패: ${error.message}`,
+        undefined,
+        'UsersService',
+      );
       throw error;
     }
 
@@ -208,7 +226,11 @@ export class UsersService {
       .maybeSingle();
 
     if (error) {
-      this.logger.error(`예산 조회 실패: ${error.message}`, undefined, 'UsersService');
+      this.logger.error(
+        `예산 조회 실패: ${error.message}`,
+        undefined,
+        'UsersService',
+      );
       throw error;
     }
 

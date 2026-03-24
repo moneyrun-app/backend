@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Put,
-  Body,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -58,7 +51,9 @@ export class UsersController {
   }
 
   @Post('budget')
-  @ApiOperation({ summary: '예산 설정 — 월 소득/고정비/저축 목표 → 일 예산 자동 계산' })
+  @ApiOperation({
+    summary: '예산 설정 — 월 소득/고정비/저축 목표 → 일 예산 자동 계산',
+  })
   @ApiResponse({ status: 201, description: '예산 설정 성공' })
   async setBudget(
     @CurrentUser() userId: string,

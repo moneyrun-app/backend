@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { WinstonModule } from 'nest-winston';
 import { createWinstonConfig } from './common/logger/winston.config.js';
 import { SupabaseModule } from './common/supabase/supabase.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
+import { CodefModule } from './codef/codef.module.js';
 
 @Module({
   imports: [
@@ -13,6 +15,9 @@ import { UsersModule } from './users/users.module.js';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // 크론 작업 스케줄러 (글로벌)
+    ScheduleModule.forRoot(),
 
     // Winston 로거 (글로벌)
     WinstonModule.forRoot(
@@ -25,6 +30,7 @@ import { UsersModule } from './users/users.module.js';
     // 기능 모듈
     AuthModule,
     UsersModule,
+    CodefModule,
   ],
 })
 export class AppModule {}
