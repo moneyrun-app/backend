@@ -13,6 +13,7 @@ import { CommunityModule } from './community/community.module.js';
 import { AiModule } from './ai/ai.module.js';
 import { PacemakerModule } from './pacemaker/pacemaker.module.js';
 import { MybookModule } from './mybook/mybook.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { MybookModule } from './mybook/mybook.module.js';
     AiModule,
     PacemakerModule,
     MybookModule,
+    NotificationsModule,
   ],
 })
 export class AppModule {}
