@@ -7,6 +7,8 @@ import { SupabaseModule } from './common/supabase/supabase.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { UsersModule } from './users/users.module.js';
 import { CodefModule } from './codef/codef.module.js';
+import { BlocksModule } from './blocks/blocks.module.js';
+import { SignalModule } from './signal/signal.module.js';
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { CodefModule } from './codef/codef.module.js';
     AuthModule,
     UsersModule,
     CodefModule,
+    BlocksModule,
+    SignalModule,
   ],
 })
 export class AppModule {}
