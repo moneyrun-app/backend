@@ -9,6 +9,7 @@ import { UsersModule } from './users/users.module.js';
 import { CodefModule } from './codef/codef.module.js';
 import { BlocksModule } from './blocks/blocks.module.js';
 import { SignalModule } from './signal/signal.module.js';
+import { CommunityModule } from './community/community.module.js';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { SignalModule } from './signal/signal.module.js';
     CodefModule,
     BlocksModule,
     SignalModule,
+    CommunityModule,
   ],
 })
 export class AppModule {}
