@@ -12,6 +12,7 @@ import { SignalModule } from './signal/signal.module.js';
 import { CommunityModule } from './community/community.module.js';
 import { AiModule } from './ai/ai.module.js';
 import { PacemakerModule } from './pacemaker/pacemaker.module.js';
+import { MybookModule } from './mybook/mybook.module.js';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { PacemakerModule } from './pacemaker/pacemaker.module.js';
     CommunityModule,
     AiModule,
     PacemakerModule,
+    MybookModule,
   ],
 })
 export class AppModule {}
