@@ -34,7 +34,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message =
         typeof exceptionResponse === 'string'
           ? exceptionResponse
-          : (exceptionResponse as { message?: string }).message ?? message;
+          : ((exceptionResponse as { message?: string }).message ?? message);
     }
 
     if (status >= 500) {
