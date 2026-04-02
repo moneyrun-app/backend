@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''mcpServers'''',{}\\), indent=2\\)\\)\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(ls:*)",
+      "Bash(npx:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh pr:*)",
+      "Bash(curl -s \"https://qoepdumnpqopinxeiotv.supabase.co/rest/v1/\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvZXBkdW1ucHFvcGlueGVpb3R2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDM2NTIzNCwiZXhwIjoyMDg5OTQxMjM0fQ.cldK5K0IPMlVWVG6q3BJGHAkb7R_41ILMfHwT9XtVAQ\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvZXBkdW1ucHFvcGlueGVpb3R2Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NDM2NTIzNCwiZXhwIjoyMDg5OTQxMjM0fQ.cldK5K0IPMlVWVG6q3BJGHAkb7R_41ILMfHwT9XtVAQ\")",
+      "Bash(grep -v '^\\\\* main$')",
+      "Bash(xargs -r git branch -D)",
+      "Bash(rm -rf .git)",
+      "Bash(git init:*)"
+    ]
+  }
+}
