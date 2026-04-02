@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import {
@@ -14,10 +14,15 @@ import {
   FixedExpenses,
 } from './surplus.calculator';
 import { calculateGrade } from './grade.calculator';
+import { BookService } from '../book/book.service';
 
 @Injectable()
 export class FinanceService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    @Inject(forwardRef(() => BookService))
+    private readonly bookService: BookService,
+  ) {}
 
   async getFullProfile(userId: string) {
     // 병렬 조회
@@ -93,6 +98,9 @@ export class FinanceService {
       throw new Error(`프로필 업데이트 실패: ${error.message}`);
     }
 
+    // 비동기 상세 리포트 트리거 (응답 지연 방지)
+    this.bookService.triggerDetailedReport(userId).catch(() => {});
+
     return this.getFullProfile(userId);
   }
 
@@ -111,6 +119,8 @@ export class FinanceService {
     if (error) {
       throw new Error(`좋은 소비 추가 실패: ${error.message}`);
     }
+
+    this.bookService.triggerDetailedReport(userId).catch(() => {});
 
     return {
       id: data.id,
@@ -144,6 +154,8 @@ export class FinanceService {
       throw new NotFoundException('좋은 소비를 찾을 수 없습니다.');
     }
 
+    this.bookService.triggerDetailedReport(userId).catch(() => {});
+
     return {
       id: data.id,
       type: data.type,
@@ -162,6 +174,8 @@ export class FinanceService {
     if (error) {
       throw new NotFoundException('좋은 소비를 찾을 수 없습니다.');
     }
+
+    this.bookService.triggerDetailedReport(userId).catch(() => {});
   }
 
   async updateFixedExpenses(userId: string, dto: UpdateFixedExpensesDto) {
@@ -180,6 +194,8 @@ export class FinanceService {
     if (error) {
       throw new Error(`고정 소비 업데이트 실패: ${error.message}`);
     }
+
+    this.bookService.triggerDetailedReport(userId).catch(() => {});
 
     return this.getFullProfile(userId);
   }

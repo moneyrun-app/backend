@@ -1,1 +1,2 @@
 - [물어보지 말고 진행](feedback_no_asking.md) — 계획 확정 후 매 단계 확인 질문 금지, 끝까지 쭉 진행
+- [머니런 MVP 백엔드 상태](project_moneyrun_mvp.md) — 초기 구현 완료, 23개 API, Supabase 11테이블, 카카오/Claude 키 미설정
