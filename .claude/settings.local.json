@@ -17,7 +17,9 @@
       "Bash(grep -v '^\\\\* main$')",
       "Bash(xargs -r git branch -D)",
       "Bash(rm -rf .git)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)"
     ]
   }
 }
