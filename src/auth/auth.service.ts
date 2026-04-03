@@ -1,6 +1,10 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../common/supabase/supabase.service';
+import { OnboardingDto } from './dto/onboarding.dto';
+import { calculateVariableCost } from '../finance/variable-cost.calculator';
+import { calculateGrade } from '../finance/grade.calculator';
+import { BookService } from '../book/book.service';
 
 interface KakaoUserInfo {
   id: number;
@@ -17,16 +21,29 @@ export class AuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
+    private readonly bookService: BookService,
   ) {}
 
   async kakaoLogin(accessToken: string) {
-    // 1. 카카오 API로 유저 정보 확인
-    const kakaoUser = await this.getKakaoUserInfo(accessToken);
+    let kakaoUser: KakaoUserInfo;
+    try {
+      kakaoUser = await this.getKakaoUserInfo(accessToken);
+    } catch (e) {
+      console.error('[auth] 카카오 유저 정보 조회 실패:', e);
+      throw e;
+    }
 
-    // 2. DB에서 유저 조회 또는 생성
-    const { user, isNewUser } = await this.findOrCreateUser(kakaoUser);
+    let user: Record<string, unknown>;
+    let isNewUser: boolean;
+    try {
+      const result = await this.findOrCreateUser(kakaoUser);
+      user = result.user;
+      isNewUser = result.isNewUser;
+    } catch (e) {
+      console.error('[auth] 유저 생성/조회 실패:', e);
+      throw e;
+    }
 
-    // 3. JWT 발급
     const jwt = this.jwtService.sign({ sub: user.id, kakaoId: user.kakao_id });
 
     return {
@@ -38,6 +55,66 @@ export class AuthService {
         isNewUser,
         hasCompletedOnboarding: user.has_completed_onboarding,
       },
+    };
+  }
+
+  async completeOnboarding(userId: string, dto: OnboardingDto) {
+    // 이미 온보딩 완료했는지 확인
+    const { data: user } = await this.supabase.db
+      .from('users')
+      .select('has_completed_onboarding')
+      .eq('id', userId)
+      .single();
+
+    if (user?.has_completed_onboarding) {
+      throw new BadRequestException('이미 온보딩을 완료했습니다.');
+    }
+
+    // 변동비 + 등급 계산
+    const monthlyInvestment = dto.monthlyInvestment ?? 0;
+    const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost, monthlyInvestment);
+    const grade = calculateGrade(dto.monthlyIncome, variableCost.monthly);
+    const investmentYears = dto.investmentYears ?? (65 - dto.age);
+
+    // finance_profiles 저장
+    const { error: profileError } = await this.supabase.db
+      .from('finance_profiles')
+      .insert({
+        user_id: userId,
+        age: dto.age,
+        monthly_income: dto.monthlyIncome,
+        monthly_fixed_cost: dto.monthlyFixedCost,
+        monthly_investment: monthlyInvestment,
+        expected_return: dto.expectedReturn ?? 5.0,
+        investment_years: investmentYears,
+        variable_cost_monthly: variableCost.monthly,
+        variable_cost_weekly: variableCost.weekly,
+        variable_cost_daily: variableCost.daily,
+        grade,
+      });
+
+    if (profileError) {
+      throw new Error(`재무 프로필 저장 실패: ${profileError.message}`);
+    }
+
+    // 온보딩 완료 표시
+    await this.supabase.db
+      .from('users')
+      .update({ has_completed_onboarding: true, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    // 최초 무료 AI 상세 리포트 생성 (비동기)
+    let firstReportId: string | null = null;
+    try {
+      firstReportId = await this.bookService.generateDetailedReport(userId, true);
+    } catch {
+      // 리포트 생성 실패해도 온보딩은 완료
+    }
+
+    return {
+      grade,
+      variableCost,
+      firstReportId,
     };
   }
 
@@ -54,12 +131,11 @@ export class AuthService {
   }
 
   private async findOrCreateUser(kakaoUser: KakaoUserInfo) {
-    const kakaoId = kakaoUser.id;
+    const kakaoId = kakaoUser.id; // bigint — 숫자 그대로 저장
     const nickname =
       kakaoUser.kakao_account?.profile?.nickname || `user_${kakaoId}`;
     const email = kakaoUser.kakao_account?.email || null;
 
-    // 기존 유저 조회
     const { data: existingUser } = await this.supabase.db
       .from('users')
       .select('*')
@@ -70,7 +146,6 @@ export class AuthService {
       return { user: existingUser, isNewUser: false };
     }
 
-    // 신규 유저 생성
     const { data: newUser, error } = await this.supabase.db
       .from('users')
       .insert({ kakao_id: kakaoId, nickname, email })

@@ -29,6 +29,7 @@ export class UsersService {
 
   async update(userId: string, dto: UpdateUserDto) {
     const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (dto.nickname !== undefined) updateData.nickname = dto.nickname;
     if (dto.email !== undefined) updateData.email = dto.email;
     if (dto.marketingConsent !== undefined) updateData.marketing_consent = dto.marketingConsent;
 

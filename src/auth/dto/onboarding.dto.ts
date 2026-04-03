@@ -1,20 +1,17 @@
 import { IsInt, IsPositive, IsNumber, IsOptional, Min } from 'class-validator';
 
-export class UpdateProfileDto {
+export class OnboardingDto {
   @IsInt()
   @IsPositive()
-  @IsOptional()
-  age?: number;
+  age: number;
 
   @IsInt()
   @IsPositive()
-  @IsOptional()
-  monthlyIncome?: number;
+  monthlyIncome: number;
 
   @IsInt()
   @Min(0)
-  @IsOptional()
-  monthlyFixedCost?: number;
+  monthlyFixedCost: number;
 
   @IsInt()
   @Min(0)

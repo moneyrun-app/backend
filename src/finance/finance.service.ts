@@ -1,93 +1,94 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import {
-  CreateGoodSpendingDto,
-  UpdateGoodSpendingDto,
-} from './dto/good-spending.dto';
-import { UpdateFixedExpensesDto } from './dto/update-fixed-expenses.dto';
-import {
-  calculateSurplus,
-  calculateGoodSpendingTotal,
-  calculateFixedExpenseTotal,
-  GoodSpending,
-  FixedExpenses,
-} from './surplus.calculator';
+import { calculateVariableCost } from './variable-cost.calculator';
 import { calculateGrade } from './grade.calculator';
-import { BookService } from '../book/book.service';
 
 @Injectable()
 export class FinanceService {
-  constructor(
-    private readonly supabase: SupabaseService,
-    @Inject(forwardRef(() => BookService))
-    private readonly bookService: BookService,
-  ) {}
+  constructor(private readonly supabase: SupabaseService) {}
 
   async getFullProfile(userId: string) {
-    // 병렬 조회
-    const [profileRes, goodSpendingsRes, fixedExpensesRes] = await Promise.all([
-      this.supabase.db
-        .from('finance_profiles')
-        .select('age, monthly_income')
-        .eq('user_id', userId)
-        .single(),
-      this.supabase.db
-        .from('good_spendings')
-        .select('id, type, label, amount')
-        .eq('user_id', userId),
-      this.supabase.db
-        .from('fixed_expenses')
-        .select('rent, utilities, phone')
-        .eq('user_id', userId)
-        .single(),
-    ]);
+    const { data: profile, error } = await this.supabase.db
+      .from('finance_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
 
-    if (!profileRes.data) {
+    if (error || !profile) {
       throw new NotFoundException('재무 프로필이 없습니다. 온보딩을 먼저 완료해주세요.');
     }
 
-    const profile = profileRes.data;
-    const goodSpendings: GoodSpending[] = goodSpendingsRes.data || [];
-    const fixedExpenses: FixedExpenses = fixedExpensesRes.data || {
-      rent: 0,
-      utilities: 0,
-      phone: 0,
-    };
+    // 6개월 업데이트 유도
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const isStale = new Date(profile.updated_at) < sixMonthsAgo;
 
-    const goodSpendingTotal = calculateGoodSpendingTotal(goodSpendings);
-    const fixedExpenseTotal = calculateFixedExpenseTotal(fixedExpenses);
-    const surplus = calculateSurplus(
-      profile.monthly_income,
-      goodSpendings,
-      fixedExpenses,
-    );
-    const grade = calculateGrade(profile.monthly_income, goodSpendingTotal);
+    // 최초 무료 리포트 사용 여부
+    const { data: freeReport } = await this.supabase.db
+      .from('detailed_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_free', true)
+      .limit(1)
+      .single();
+
+    const canGenerateFreeReport = !freeReport;
 
     return {
       age: profile.age,
       monthlyIncome: profile.monthly_income,
-      grade,
-      goodSpendings: (goodSpendingsRes.data || []).map((g: any) => ({
-        id: g.id,
-        type: g.type,
-        label: g.label,
-        amount: g.amount,
-      })),
-      goodSpendingTotal,
-      fixedExpenses,
-      fixedExpenseTotal,
-      surplus,
+      monthlyFixedCost: profile.monthly_fixed_cost,
+      monthlyInvestment: profile.monthly_investment ?? 0,
+      expectedReturn: profile.expected_return,
+      investmentYears: profile.investment_years,
+      grade: profile.grade,
+      variableCost: {
+        monthly: profile.variable_cost_monthly,
+        weekly: profile.variable_cost_weekly,
+        daily: profile.variable_cost_daily,
+      },
+      lastUpdated: profile.updated_at,
+      isStale,
+      canGenerateFreeReport,
     };
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
+    // 현재 프로필 조회
+    const { data: current } = await this.supabase.db
+      .from('finance_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (!current) {
+      throw new NotFoundException('재무 프로필이 없습니다.');
+    }
+
+    // 변경사항 적용
+    const monthlyIncome = dto.monthlyIncome ?? current.monthly_income;
+    const monthlyFixedCost = dto.monthlyFixedCost ?? current.monthly_fixed_cost;
+    const monthlyInvestment = dto.monthlyInvestment ?? current.monthly_investment ?? 0;
+
+    // 변동비 + 등급 재계산
+    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost, monthlyInvestment);
+    const grade = calculateGrade(monthlyIncome, variableCost.monthly);
+
     const updateData: Record<string, any> = {
       updated_at: new Date().toISOString(),
+      variable_cost_monthly: variableCost.monthly,
+      variable_cost_weekly: variableCost.weekly,
+      variable_cost_daily: variableCost.daily,
+      grade,
     };
+
     if (dto.age !== undefined) updateData.age = dto.age;
-    if (dto.monthlyIncome !== undefined)
-      updateData.monthly_income = dto.monthlyIncome;
+    if (dto.monthlyIncome !== undefined) updateData.monthly_income = dto.monthlyIncome;
+    if (dto.monthlyFixedCost !== undefined) updateData.monthly_fixed_cost = dto.monthlyFixedCost;
+    if (dto.monthlyInvestment !== undefined) updateData.monthly_investment = dto.monthlyInvestment;
+    if (dto.expectedReturn !== undefined) updateData.expected_return = dto.expectedReturn;
+    if (dto.investmentYears !== undefined) updateData.investment_years = dto.investmentYears;
 
     const { error } = await this.supabase.db
       .from('finance_profiles')
@@ -98,105 +99,20 @@ export class FinanceService {
       throw new Error(`프로필 업데이트 실패: ${error.message}`);
     }
 
-    // 비동기 상세 리포트 트리거 (응답 지연 방지)
-    this.bookService.triggerDetailedReport(userId).catch(() => {});
-
-    return this.getFullProfile(userId);
-  }
-
-  async createGoodSpending(userId: string, dto: CreateGoodSpendingDto) {
-    const { data, error } = await this.supabase.db
-      .from('good_spendings')
-      .insert({
-        user_id: userId,
-        type: dto.type,
-        label: dto.label,
-        amount: dto.amount,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`좋은 소비 추가 실패: ${error.message}`);
-    }
-
-    this.bookService.triggerDetailedReport(userId).catch(() => {});
-
-    return {
-      id: data.id,
-      type: data.type,
-      label: data.label,
-      amount: data.amount,
-    };
-  }
-
-  async updateGoodSpending(
-    userId: string,
-    id: string,
-    dto: UpdateGoodSpendingDto,
-  ) {
-    const updateData: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    };
-    if (dto.type !== undefined) updateData.type = dto.type;
-    if (dto.label !== undefined) updateData.label = dto.label;
-    if (dto.amount !== undefined) updateData.amount = dto.amount;
-
-    const { data, error } = await this.supabase.db
-      .from('good_spendings')
-      .update(updateData)
-      .eq('id', id)
+    // 최초 무료 리포트 사용 여부
+    const { data: freeReport } = await this.supabase.db
+      .from('detailed_reports')
+      .select('id')
       .eq('user_id', userId)
-      .select()
+      .eq('is_free', true)
+      .limit(1)
       .single();
 
-    if (error) {
-      throw new NotFoundException('좋은 소비를 찾을 수 없습니다.');
-    }
-
-    this.bookService.triggerDetailedReport(userId).catch(() => {});
-
     return {
-      id: data.id,
-      type: data.type,
-      label: data.label,
-      amount: data.amount,
+      grade,
+      variableCost,
+      canGenerateFreeReport: !freeReport,
+      reportPrice: 3900,
     };
-  }
-
-  async deleteGoodSpending(userId: string, id: string) {
-    const { error } = await this.supabase.db
-      .from('good_spendings')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', userId);
-
-    if (error) {
-      throw new NotFoundException('좋은 소비를 찾을 수 없습니다.');
-    }
-
-    this.bookService.triggerDetailedReport(userId).catch(() => {});
-  }
-
-  async updateFixedExpenses(userId: string, dto: UpdateFixedExpensesDto) {
-    const updateData: Record<string, any> = {
-      updated_at: new Date().toISOString(),
-    };
-    if (dto.rent !== undefined) updateData.rent = dto.rent;
-    if (dto.utilities !== undefined) updateData.utilities = dto.utilities;
-    if (dto.phone !== undefined) updateData.phone = dto.phone;
-
-    const { error } = await this.supabase.db
-      .from('fixed_expenses')
-      .update(updateData)
-      .eq('user_id', userId);
-
-    if (error) {
-      throw new Error(`고정 소비 업데이트 실패: ${error.message}`);
-    }
-
-    this.bookService.triggerDetailedReport(userId).catch(() => {});
-
-    return this.getFullProfile(userId);
   }
 }

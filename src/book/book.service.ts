@@ -1,40 +1,50 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  HttpException,
+  HttpStatus,
+} from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 import { FinanceService } from '../finance/finance.service';
 import { ConstantsService } from '../constants/constants.service';
 import { ReportGenerator } from './report.generator';
+import { ScraperService } from './scraper.service';
 import { CreateWeeklyReportDto } from './dto/create-weekly-report.dto';
 
 @Injectable()
 export class BookService {
   constructor(
     private readonly supabase: SupabaseService,
-    @Inject(forwardRef(() => FinanceService))
     private readonly financeService: FinanceService,
     private readonly constantsService: ConstantsService,
     private readonly reportGenerator: ReportGenerator,
+    private readonly scraperService: ScraperService,
   ) {}
 
-  // ========== 상세 리포트 ==========
+  // ========== AI 상세 리포트 ==========
 
   async getDetailedReports(userId: string) {
     const { data: items } = await this.supabase.db
       .from('detailed_reports')
-      .select('id, title, summary, created_at')
+      .select('id, title, summary, pdf_url, is_free, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    // 월 1회 제한 체크
-    const { canGenerate, nextAvailableDate } =
-      await this.checkCanGenerateReport(userId);
+    const { data: freeReport } = await this.supabase.db
+      .from('detailed_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_free', true)
+      .limit(1)
+      .single();
 
     return {
-      canGenerate,
-      nextAvailableDate,
+      canGenerateFree: !freeReport,
       items: (items || []).map((r: any) => ({
         id: r.id,
         title: r.title,
         summary: r.summary,
+        pdfUrl: r.pdf_url,
         createdAt: r.created_at,
       })),
     };
@@ -57,62 +67,75 @@ export class BookService {
       title: data.title,
       content: data.content,
       grade: data.grade,
-      surplus: data.surplus,
       analysis: data.analysis,
+      pdfUrl: data.pdf_url,
+      isFree: data.is_free,
       createdAt: data.created_at,
     };
   }
 
-  async checkCanGenerateReport(
-    userId: string,
-  ): Promise<{ canGenerate: boolean; nextAvailableDate: string | null }> {
-    const { data: latest } = await this.supabase.db
-      .from('detailed_reports')
-      .select('created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!latest) {
-      return { canGenerate: true, nextAvailableDate: null };
-    }
-
-    const lastDate = new Date(latest.created_at);
-    const nextDate = new Date(lastDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-    const now = new Date();
-
-    if (now >= nextDate) {
-      return { canGenerate: true, nextAvailableDate: null };
-    }
-
-    return {
-      canGenerate: false,
-      nextAvailableDate: nextDate.toISOString().split('T')[0],
-    };
-  }
-
-  async triggerDetailedReport(userId: string) {
-    const { canGenerate } = await this.checkCanGenerateReport(userId);
-    if (!canGenerate) return;
-
+  /**
+   * 상세 리포트 생성 (온보딩 시 호출)
+   * @returns 생성된 리포트 ID
+   */
+  async generateDetailedReport(userId: string, isFree: boolean): Promise<string> {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
-    const report = await this.reportGenerator.generateDetailedReport(
-      profile,
-      configMap,
-    );
+    const report = await this.reportGenerator.generateDetailedReport(profile, configMap);
 
-    await this.supabase.db.from('detailed_reports').insert({
-      user_id: userId,
-      title: report.title,
-      summary: report.summary,
-      content: report.content,
-      grade: profile.grade,
-      surplus: { monthly: profile.surplus.monthly, daily: profile.surplus.daily },
-      analysis: report.analysis,
-    });
+    const { data: saved, error } = await this.supabase.db
+      .from('detailed_reports')
+      .insert({
+        user_id: userId,
+        title: report.title,
+        summary: report.summary,
+        content: report.content,
+        grade: profile.grade,
+        analysis: report.analysis,
+        is_free: isFree,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      throw new Error(`리포트 저장 실패: ${error.message}`);
+    }
+
+    return saved!.id;
+  }
+
+  /**
+   * 유료 리포트 재생성 (또는 첫 무료 생성)
+   */
+  async generateReportWithPayment(userId: string, paymentToken?: string) {
+    // 최초 무료 여부 확인
+    const { data: freeReport } = await this.supabase.db
+      .from('detailed_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('is_free', true)
+      .limit(1)
+      .single();
+
+    const isFree = !freeReport;
+
+    if (!isFree && !paymentToken) {
+      throw new HttpException(
+        '유료 리포트 생성은 결제가 필요합니다.',
+        HttpStatus.PAYMENT_REQUIRED,
+      );
+    }
+
+    // TODO: 유료인 경우 PG 결제 검증 (paymentToken)
+    // 결제 이력 저장은 payment 모듈에서 처리
+
+    const reportId = await this.generateDetailedReport(userId, isFree);
+
+    return {
+      id: reportId,
+      status: 'generating',
+    };
   }
 
   // ========== 주간 리포트 ==========
@@ -137,7 +160,6 @@ export class BookService {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
-    // 이번 주 페이스메이커 메시지들
     const { weekStart, weekEnd } = this.getCurrentWeekRange();
 
     const { data: weekMessages } = await this.supabase.db
@@ -163,6 +185,7 @@ export class BookService {
         summary: generated.summary,
         guide: generated.guide,
         user_input: dto.weekStatus,
+        weekly_stats: generated.weeklyStats || {},
       })
       .select()
       .single();
@@ -194,15 +217,104 @@ export class BookService {
       weekEnd: data.week_end,
       summary: data.summary,
       guide: data.guide,
+      weeklyStats: data.weekly_stats || {},
       userInput: data.user_input,
       createdAt: data.created_at,
     };
   }
 
+  // ========== 외부 URL 스크랩 ==========
+
+  async createExternalScrap(userId: string, url: string) {
+    // URL 메타데이터 + AI 요약
+    const metadata = await this.scraperService.scrapeUrl(url);
+
+    // 동일 URL scrap_count 조회
+    const { data: existing } = await this.supabase.db
+      .from('external_scraps')
+      .select('scrap_count')
+      .eq('url', url)
+      .limit(1)
+      .single();
+
+    const scrapCount = (existing?.scrap_count || 0) + 1;
+
+    // 저장
+    const { data: saved, error } = await this.supabase.db
+      .from('external_scraps')
+      .insert({
+        user_id: userId,
+        url,
+        channel: metadata.channel,
+        creator: metadata.creator,
+        content_date: metadata.contentDate,
+        title: metadata.title,
+        ai_summary: metadata.aiSummary,
+        scrap_count: scrapCount,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`스크랩 저장 실패: ${error.message}`);
+    }
+
+    // 전체 URL scrap_count 업데이트
+    if (existing) {
+      await this.supabase.db
+        .from('external_scraps')
+        .update({ scrap_count: scrapCount })
+        .eq('url', url);
+    }
+
+    return {
+      id: saved!.id,
+      url: saved!.url,
+      channel: saved!.channel,
+      creator: saved!.creator,
+      contentDate: saved!.content_date,
+      title: saved!.title,
+      aiSummary: saved!.ai_summary,
+      scrapCount,
+      createdAt: saved!.created_at,
+    };
+  }
+
+  async getExternalScraps(userId: string) {
+    const { data } = await this.supabase.db
+      .from('external_scraps')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    return (data || []).map((s: any) => ({
+      id: s.id,
+      url: s.url,
+      channel: s.channel,
+      creator: s.creator,
+      contentDate: s.content_date,
+      title: s.title,
+      aiSummary: s.ai_summary,
+      scrapCount: s.scrap_count,
+      createdAt: s.created_at,
+    }));
+  }
+
+  async deleteExternalScrap(userId: string, id: string) {
+    const { error } = await this.supabase.db
+      .from('external_scraps')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+
+    if (error) {
+      throw new NotFoundException('스크랩을 찾을 수 없습니다.');
+    }
+  }
+
   // ========== 금융 학습 ==========
 
   async getLearnContents(userId: string, grade?: string) {
-    // 유저 등급 조회 (grade 파라미터 없으면 유저 등급 사용)
     let targetGrade = grade;
     if (!targetGrade) {
       const profile = await this.financeService.getFullProfile(userId);
@@ -215,7 +327,6 @@ export class BookService {
       .eq('grade', targetGrade)
       .order('created_at', { ascending: true });
 
-    // 읽음/스크랩 상태 조회
     const [readsRes, scrapsRes] = await Promise.all([
       this.supabase.db
         .from('user_content_reads')
@@ -227,12 +338,8 @@ export class BookService {
         .eq('user_id', userId),
     ]);
 
-    const readIds = new Set(
-      (readsRes.data || []).map((r: any) => r.content_id),
-    );
-    const scrapIds = new Set(
-      (scrapsRes.data || []).map((s: any) => s.content_id),
-    );
+    const readIds = new Set((readsRes.data || []).map((r: any) => r.content_id));
+    const scrapIds = new Set((scrapsRes.data || []).map((s: any) => s.content_id));
 
     return (contents || []).map((c: any) => ({
       id: c.id,
@@ -263,7 +370,6 @@ export class BookService {
         { onConflict: 'user_id,content_id' },
       );
 
-    // 스크랩 여부 확인
     const { data: scrap } = await this.supabase.db
       .from('user_content_scraps')
       .select('id')
@@ -281,10 +387,7 @@ export class BookService {
     };
   }
 
-  // ========== 스크랩 ==========
-
-  async toggleScrap(userId: string, contentId: string) {
-    // 기존 스크랩 확인
+  async toggleLearnScrap(userId: string, contentId: string) {
     const { data: existing } = await this.supabase.db
       .from('user_content_scraps')
       .select('id')
@@ -293,14 +396,12 @@ export class BookService {
       .single();
 
     if (existing) {
-      // 스크랩 해제
       await this.supabase.db
         .from('user_content_scraps')
         .delete()
         .eq('id', existing.id);
       return { isScrapped: false };
     } else {
-      // 스크랩 추가
       await this.supabase.db
         .from('user_content_scraps')
         .insert({ user_id: userId, content_id: contentId });
@@ -308,23 +409,7 @@ export class BookService {
     }
   }
 
-  async getScraps(userId: string) {
-    const { data } = await this.supabase.db
-      .from('user_content_scraps')
-      .select('content_id, created_at, learn_contents(id, title, grade)')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    return (data || []).map((s: any) => ({
-      id: s.learn_contents?.id,
-      title: s.learn_contents?.title,
-      grade: s.learn_contents?.grade,
-      type: 'learn',
-      scrappedAt: s.created_at,
-    }));
-  }
-
-  // ========== 유틸 ==========
+  // ========== Utils ==========
 
   private getCurrentWeekRange(): { weekStart: string; weekEnd: string } {
     const now = new Date();

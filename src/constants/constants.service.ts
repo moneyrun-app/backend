@@ -19,6 +19,10 @@ export class ConstantsService {
     }
 
     return {
+      exchangeRate: parseInt(configMap['exchange_rate'] || '0'),
+      oilPrice: parseFloat(configMap['oil_price'] || '0'),
+      inflationRate: parseFloat(configMap['inflation_rate'] || '0'),
+      minPensionGoal: parseInt(configMap['min_pension_goal'] || '1300000'),
       seoulAverageRent: parseInt(configMap['seoul_avg_rent'] || '0'),
       categoryAverages: {
         food: parseInt(configMap['avg_food'] || '0'),
@@ -28,7 +32,6 @@ export class ConstantsService {
         leisure: parseInt(configMap['avg_leisure'] || '0'),
         etc: parseInt(configMap['avg_etc'] || '0'),
       },
-      inflationRate: parseFloat(configMap['inflation_rate'] || '0'),
       updatedAt: latestUpdate,
     };
   }

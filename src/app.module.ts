@@ -3,10 +3,11 @@ import { ConfigModule } from '@nestjs/config';
 import { SupabaseModule } from './common/supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
-import { OnboardingModule } from './onboarding/onboarding.module';
 import { FinanceModule } from './finance/finance.module';
+import { SimulationModule } from './simulation/simulation.module';
 import { PacemakerModule } from './pacemaker/pacemaker.module';
 import { BookModule } from './book/book.module';
+import { PaymentModule } from './payment/payment.module';
 import { ConstantsModule } from './constants/constants.module';
 
 @Module({
@@ -15,10 +16,11 @@ import { ConstantsModule } from './constants/constants.module';
     SupabaseModule,
     AuthModule,
     UsersModule,
-    OnboardingModule,
     FinanceModule,
+    SimulationModule,
     PacemakerModule,
     BookModule,
+    PaymentModule,
     ConstantsModule,
   ],
 })
