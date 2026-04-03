@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: moneyrun-backend
+    runtime: node
+    region: singapore
+    plan: free
+    branch: main
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      # ── Runtime ──────────────────────────────────
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+
+      # ── Secrets (Render Dashboard에서 수동 입력) ──
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: KAKAO_CLIENT_ID
+        sync: false
+      - key: KAKAO_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # ── JWT ──────────────────────────────────────
+      - key: JWT_EXPIRES_IN
+        value: "7d"
+
+      # ── CORS ─────────────────────────────────────
+      - key: CORS_ALLOWED_ORIGINS
+        value: "*"
