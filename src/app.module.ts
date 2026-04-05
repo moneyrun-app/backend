@@ -9,6 +9,7 @@ import { PacemakerModule } from './pacemaker/pacemaker.module';
 import { BookModule } from './book/book.module';
 import { PaymentModule } from './payment/payment.module';
 import { ConstantsModule } from './constants/constants.module';
+import { QuizModule } from './quiz/quiz.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ConstantsModule } from './constants/constants.module';
     BookModule,
     PaymentModule,
     ConstantsModule,
+    QuizModule,
   ],
 })
 export class AppModule {}

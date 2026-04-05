@@ -3,6 +3,7 @@ import { PacemakerService } from './pacemaker.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FeedbackDto } from './dto/feedback.dto';
+import { CreateDailyCheckDto } from './dto/daily-check.dto';
 
 @Controller('pacemaker')
 @UseGuards(JwtAuthGuard)
@@ -12,11 +13,6 @@ export class PacemakerController {
   @Get('today')
   async getToday(@CurrentUser('id') userId: string) {
     return this.pacemakerService.getTodayMessage(userId);
-  }
-
-  @Post('refresh')
-  async refresh(@CurrentUser('id') userId: string) {
-    return this.pacemakerService.refreshMessage(userId);
   }
 
   @Post('actions/:id/complete')
@@ -33,6 +29,22 @@ export class PacemakerController {
     @Body() dto: FeedbackDto,
   ) {
     return this.pacemakerService.submitFeedback(userId, dto);
+  }
+
+  @Post('daily-check')
+  async createDailyCheck(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateDailyCheckDto,
+  ) {
+    return this.pacemakerService.createDailyCheck(userId, dto);
+  }
+
+  @Get('daily-checks')
+  async getDailyChecks(
+    @CurrentUser('id') userId: string,
+    @Query('month') month: string, // 2026-04
+  ) {
+    return this.pacemakerService.getDailyChecks(userId, month);
   }
 
   @Get('history')

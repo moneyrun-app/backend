@@ -26,25 +26,16 @@ export class BookService {
   async getDetailedReports(userId: string) {
     const { data: items } = await this.supabase.db
       .from('detailed_reports')
-      .select('id, title, summary, pdf_url, is_free, created_at')
+      .select('id, summary, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    const { data: freeReport } = await this.supabase.db
-      .from('detailed_reports')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('is_free', true)
-      .limit(1)
-      .single();
-
     return {
-      canGenerateFree: !freeReport,
       items: (items || []).map((r: any) => ({
         id: r.id,
-        title: r.title,
+        title: '시뮬레이터 분석 리포트',
         summary: r.summary,
-        pdfUrl: r.pdf_url,
+        analyzedAt: r.created_at,
         createdAt: r.created_at,
       })),
     };
@@ -64,12 +55,15 @@ export class BookService {
 
     return {
       id: data.id,
-      title: data.title,
-      content: data.content,
+      title: '시뮬레이터 분석 리포트',
+      analyzedAt: data.created_at,
       grade: data.grade,
+      surplus: {
+        monthly: data.analysis?.surplus?.monthly || 0,
+        daily: data.analysis?.surplus?.daily || 0,
+      },
       analysis: data.analysis,
-      pdfUrl: data.pdf_url,
-      isFree: data.is_free,
+      content: data.content,
       createdAt: data.created_at,
     };
   }
@@ -88,7 +82,7 @@ export class BookService {
       .from('detailed_reports')
       .insert({
         user_id: userId,
-        title: report.title,
+        title: '시뮬레이터 분석 리포트',
         summary: report.summary,
         content: report.content,
         grade: profile.grade,
@@ -138,86 +132,96 @@ export class BookService {
     };
   }
 
-  // ========== 주간 리포트 ==========
+  // ========== 월간 리포트 ==========
 
-  async getWeeklyReports(userId: string) {
+  async getMonthlyReports(userId: string) {
     const { data } = await this.supabase.db
-      .from('weekly_reports')
-      .select('id, week_start, week_end, summary, created_at')
+      .from('monthly_reports')
+      .select('id, month, summary, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
     return (data || []).map((r: any) => ({
       id: r.id,
-      weekStart: r.week_start,
-      weekEnd: r.week_end,
+      month: r.month,
       summary: r.summary,
       createdAt: r.created_at,
     }));
   }
 
-  async createWeeklyReport(userId: string, dto: CreateWeeklyReportDto) {
+  async createMonthlyReport(userId: string, dto: CreateWeeklyReportDto) {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
-    const { weekStart, weekEnd } = this.getCurrentWeekRange();
+    const month = this.getCurrentMonth();
+    const monthStart = `${month}-01`;
+    const [y, m] = month.split('-').map(Number);
+    const monthEnd = `${month}-${new Date(y, m, 0).getDate()}`;
 
-    const { data: weekMessages } = await this.supabase.db
+    const { data: monthMessages } = await this.supabase.db
       .from('pacemaker_messages')
       .select('message, date')
       .eq('user_id', userId)
-      .gte('date', weekStart)
-      .lte('date', weekEnd);
+      .gte('date', monthStart)
+      .lte('date', monthEnd);
+
+    // 일별 체크 데이터 포함
+    const { data: dailyChecks } = await this.supabase.db
+      .from('daily_checks')
+      .select('date, status')
+      .eq('user_id', userId)
+      .gte('date', monthStart)
+      .lte('date', monthEnd);
 
     const generated = await this.reportGenerator.generateWeeklyReport(
       profile,
       configMap,
       dto.weekStatus,
-      weekMessages || [],
+      monthMessages || [],
     );
 
     const { data: saved } = await this.supabase.db
-      .from('weekly_reports')
+      .from('monthly_reports')
       .insert({
         user_id: userId,
-        week_start: weekStart,
-        week_end: weekEnd,
+        month,
         summary: generated.summary,
         guide: generated.guide,
         user_input: dto.weekStatus,
-        weekly_stats: generated.weeklyStats || {},
+        weekly_stats: {
+          dailyChecks: dailyChecks || [],
+          ...generated.weeklyStats,
+        },
       })
       .select()
       .single();
 
     return {
       id: saved!.id,
-      weekStart: saved!.week_start,
-      weekEnd: saved!.week_end,
+      month: saved!.month,
       summary: saved!.summary,
       createdAt: saved!.created_at,
     };
   }
 
-  async getWeeklyReportById(userId: string, id: string) {
+  async getMonthlyReportById(userId: string, id: string) {
     const { data, error } = await this.supabase.db
-      .from('weekly_reports')
+      .from('monthly_reports')
       .select('*')
       .eq('id', id)
       .eq('user_id', userId)
       .single();
 
     if (error || !data) {
-      throw new NotFoundException('주간 리포트를 찾을 수 없습니다.');
+      throw new NotFoundException('월간 리포트를 찾을 수 없습니다.');
     }
 
     return {
       id: data.id,
-      weekStart: data.week_start,
-      weekEnd: data.week_end,
+      month: data.month,
       summary: data.summary,
       guide: data.guide,
-      weeklyStats: data.weekly_stats || {},
+      monthlyStats: data.weekly_stats || {},
       userInput: data.user_input,
       createdAt: data.created_at,
     };
@@ -411,21 +415,11 @@ export class BookService {
 
   // ========== Utils ==========
 
-  private getCurrentWeekRange(): { weekStart: string; weekEnd: string } {
+  private getCurrentMonth(): string {
     const now = new Date();
     const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-    const day = kst.getUTCDay();
-    const diffToMonday = day === 0 ? -6 : 1 - day;
-
-    const monday = new Date(kst);
-    monday.setUTCDate(kst.getUTCDate() + diffToMonday);
-
-    const sunday = new Date(monday);
-    sunday.setUTCDate(monday.getUTCDate() + 6);
-
-    return {
-      weekStart: monday.toISOString().split('T')[0],
-      weekEnd: sunday.toISOString().split('T')[0],
-    };
+    const year = kst.getUTCFullYear();
+    const month = String(kst.getUTCMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
   }
 }

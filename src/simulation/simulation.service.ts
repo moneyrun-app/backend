@@ -9,48 +9,59 @@ export class SimulationService {
   constructor(private readonly constantsService: ConstantsService) {}
 
   async calculate(dto: SimulationDto) {
-    const { age, monthlyIncome, monthlyFixedCost } = dto;
-    const monthlyInvestment = dto.monthlyInvestment ?? 0;
-    const expectedReturn = dto.expectedReturn ?? 5.0;
-    const investmentYears = dto.investmentYears ?? (65 - age);
+    const { age, monthlyIncome, monthlyFixedCost, monthlyVariableCost, retirementAge } = dto;
+    const pensionStartAge = dto.pensionStartAge ?? 65;
 
-    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost, monthlyInvestment);
-    const grade = calculateGrade(monthlyIncome, variableCost.monthly);
+    const monthlyExpense = monthlyFixedCost + monthlyVariableCost;
+    const surplus = monthlyIncome - monthlyExpense;
+    const investmentPeriod = retirementAge - age;
+    const vestingPeriod = pensionStartAge - retirementAge;
+    const grade = calculateGrade(monthlyIncome, monthlyExpense);
+    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost);
 
-    // system_config에서 최소 생활비 목표 조회
-    const configMap = await this.constantsService.getConfigMap();
-    const minPensionGoal = parseInt(configMap['min_pension_goal'] || '1300000');
+    const floor1000 = (n: number) => Math.floor(n / 1000) * 1000;
 
-    // 미래 자산 시뮬레이션 (투자비 기준 복리 계산)
-    const monthlyRate = expectedReturn / 100 / 12;
-    const months = Math.max(investmentYears, 0) * 12;
-    const monthlySaving = monthlyInvestment > 0 ? monthlyInvestment : variableCost.monthly;
+    // 3가지 시나리오 시뮬레이션
+    const rates = [
+      { label: '예적금 3%', rate: 3 },
+      { label: 'KOSPI 7%', rate: 7 },
+      { label: 'S&P500 10%', rate: 10 },
+    ];
 
-    let futureAsset: number;
-    if (monthlyRate === 0 || months === 0) {
-      futureAsset = monthlySaving * months;
-    } else {
-      futureAsset = Math.floor(
-        monthlySaving *
-          ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate),
-      );
-    }
+    const months = Math.max(investmentPeriod, 0) * 12;
+    const monthlySaving = Math.max(surplus, 0);
+    const pensionMonths = Math.max(vestingPeriod + 20, 20) * 12; // 거치기간 + 수령 20년
 
-    // 월 연금 추정 (20년 은퇴 생활 가정)
-    const retirementMonths = 20 * 12;
-    const monthlyPensionEstimate = Math.floor(futureAsset / retirementMonths);
-    const shortfall = Math.max(0, minPensionGoal - monthlyPensionEstimate);
+    const cases = rates.map(({ label, rate }) => {
+      const monthlyRate = rate / 100 / 12;
+      let futureAsset: number;
+
+      if (monthlyRate === 0 || months === 0) {
+        futureAsset = monthlySaving * months;
+      } else {
+        futureAsset = monthlySaving *
+          ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
+      }
+
+      // 거치기간 복리 적용
+      if (vestingPeriod > 0 && monthlyRate > 0) {
+        futureAsset = futureAsset * Math.pow(1 + monthlyRate, vestingPeriod * 12);
+      }
+
+      futureAsset = floor1000(futureAsset);
+      const monthlyPension = floor1000(futureAsset / pensionMonths);
+
+      return { label, futureAsset, monthlyPension };
+    });
 
     return {
-      variableCost,
-      simulation: {
-        futureAsset,
-        monthlyPensionEstimate,
-        minLivingCost: minPensionGoal,
-        shortfall,
-        meetsGoal: monthlyPensionEstimate >= minPensionGoal,
-      },
       grade,
+      monthlyExpense,
+      surplus: floor1000(surplus),
+      investmentPeriod,
+      vestingPeriod,
+      variableCost,
+      simulation: { cases },
     };
   }
 }

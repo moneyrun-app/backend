@@ -6,12 +6,10 @@ import {
   Param,
   Query,
   Body,
-  Res,
   UseGuards,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import type { Response } from 'express';
 import { BookService } from './book.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -48,41 +46,29 @@ export class BookController {
     return this.bookService.generateReportWithPayment(userId, dto.paymentToken);
   }
 
-  @Get('detailed-reports/:id/download')
-  async downloadReport(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
-    const report = await this.bookService.getDetailedReportById(userId, id);
-    // MVP: 마크다운 컨텐츠를 텍스트로 반환 (추후 PDF 생성 구현)
-    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="report-${id}.md"`);
-    res.send(report.content);
+
+  // ========== 월간 리포트 ==========
+
+  @Get('monthly-reports')
+  async getMonthlyReports(@CurrentUser('id') userId: string) {
+    return this.bookService.getMonthlyReports(userId);
   }
 
-  // ========== 주간 리포트 ==========
-
-  @Get('weekly-reports')
-  async getWeeklyReports(@CurrentUser('id') userId: string) {
-    return this.bookService.getWeeklyReports(userId);
-  }
-
-  @Post('weekly-reports')
+  @Post('monthly-reports')
   @HttpCode(HttpStatus.CREATED)
-  async createWeeklyReport(
+  async createMonthlyReport(
     @CurrentUser('id') userId: string,
     @Body() dto: CreateWeeklyReportDto,
   ) {
-    return this.bookService.createWeeklyReport(userId, dto);
+    return this.bookService.createMonthlyReport(userId, dto);
   }
 
-  @Get('weekly-reports/:id')
-  async getWeeklyReport(
+  @Get('monthly-reports/:id')
+  async getMonthlyReport(
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
   ) {
-    return this.bookService.getWeeklyReportById(userId, id);
+    return this.bookService.getMonthlyReportById(userId, id);
   }
 
   // ========== 외부 URL 스크랩 ==========
@@ -110,29 +96,4 @@ export class BookController {
     return { message: '삭제되었습니다.' };
   }
 
-  // ========== 금융 학습 ==========
-
-  @Get('learn')
-  async getLearnContents(
-    @CurrentUser('id') userId: string,
-    @Query('grade') grade?: string,
-  ) {
-    return this.bookService.getLearnContents(userId, grade);
-  }
-
-  @Get('learn/:id')
-  async getLearnContent(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.bookService.getLearnContentById(userId, id);
-  }
-
-  @Post('learn/:id/scrap')
-  async toggleLearnScrap(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
-    return this.bookService.toggleLearnScrap(userId, id);
-  }
 }

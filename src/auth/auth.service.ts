@@ -70,11 +70,14 @@ export class AuthService {
       throw new BadRequestException('이미 온보딩을 완료했습니다.');
     }
 
-    // 변동비 + 등급 계산
-    const monthlyInvestment = dto.monthlyInvestment ?? 0;
-    const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost, monthlyInvestment);
-    const grade = calculateGrade(dto.monthlyIncome, variableCost.monthly);
-    const investmentYears = dto.investmentYears ?? (65 - dto.age);
+    // 계산
+    const pensionStartAge = dto.pensionStartAge ?? 65;
+    const monthlyExpense = dto.monthlyFixedCost + dto.monthlyVariableCost;
+    const surplus = dto.monthlyIncome - monthlyExpense;
+    const investmentPeriod = dto.retirementAge - dto.age;
+    const vestingPeriod = pensionStartAge - dto.retirementAge;
+    const grade = calculateGrade(dto.monthlyIncome, monthlyExpense);
+    const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost);
 
     // finance_profiles 저장
     const { error: profileError } = await this.supabase.db
@@ -82,11 +85,11 @@ export class AuthService {
       .insert({
         user_id: userId,
         age: dto.age,
+        retirement_age: dto.retirementAge,
+        pension_start_age: pensionStartAge,
         monthly_income: dto.monthlyIncome,
         monthly_fixed_cost: dto.monthlyFixedCost,
-        monthly_investment: monthlyInvestment,
-        expected_return: dto.expectedReturn ?? 5.0,
-        investment_years: investmentYears,
+        monthly_variable_cost: dto.monthlyVariableCost,
         variable_cost_monthly: variableCost.monthly,
         variable_cost_weekly: variableCost.weekly,
         variable_cost_daily: variableCost.daily,
@@ -97,10 +100,14 @@ export class AuthService {
       throw new Error(`재무 프로필 저장 실패: ${profileError.message}`);
     }
 
-    // 온보딩 완료 표시
+    // 닉네임 + 온보딩 완료 표시
     await this.supabase.db
       .from('users')
-      .update({ has_completed_onboarding: true, updated_at: new Date().toISOString() })
+      .update({
+        nickname: dto.nickname,
+        has_completed_onboarding: true,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', userId);
 
     // 최초 무료 AI 상세 리포트 생성 (비동기)
@@ -113,6 +120,10 @@ export class AuthService {
 
     return {
       grade,
+      monthlyExpense,
+      surplus,
+      investmentPeriod,
+      vestingPeriod,
       variableCost,
       firstReportId,
     };

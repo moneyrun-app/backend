@@ -8,7 +8,9 @@ import { SupabaseService } from '../common/supabase/supabase.service';
 import { FinanceService } from '../finance/finance.service';
 import { ConstantsService } from '../constants/constants.service';
 import { MessageGenerator } from './message.generator';
+import { QuizService } from '../quiz/quiz.service';
 import { FeedbackDto } from './dto/feedback.dto';
+import { CreateDailyCheckDto } from './dto/daily-check.dto';
 
 @Injectable()
 export class PacemakerService {
@@ -17,45 +19,47 @@ export class PacemakerService {
     private readonly financeService: FinanceService,
     private readonly constantsService: ConstantsService,
     private readonly messageGenerator: MessageGenerator,
+    private readonly quizService: QuizService,
   ) {}
 
   async getTodayMessage(userId: string) {
     const today = this.getTodayKST();
 
-    // 캐시된 메시지 확인 (가장 최근 것)
+    // 오늘 이미 생성된 메시지가 있는지 확인
     const { data: cached } = await this.supabase.db
       .from('pacemaker_messages')
       .select('*')
       .eq('user_id', userId)
       .eq('date', today)
-      .order('created_at', { ascending: false })
       .limit(1)
       .single();
 
     if (cached) {
-      // 추천 행동 조회
-      const actions = await this.getActionsForMessage(cached.id);
-      const todayCount = await this.getTodayMessageCount(userId, today);
-
-      return this.formatMessage(cached, actions, todayCount < 2);
+      const quizzes = await this.quizService.getTodayQuizzes(userId, 10);
+      return this.formatResponse(cached, quizzes);
     }
 
-    // AI 메시지 생성
-    return this.generateAndSaveMessage(userId, today);
-  }
+    // 없으면 AI로 메시지 1개 생성
+    try {
+      return await this.generateAndSave(userId, today);
+    } catch (e: any) {
+      // 동시 요청으로 유니크 제약 위반 시 → 캐시 반환
+      if (e.message?.includes('duplicate') || e.message?.includes('unique')) {
+        const { data: retry } = await this.supabase.db
+          .from('pacemaker_messages')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('date', today)
+          .limit(1)
+          .single();
 
-  async refreshMessage(userId: string) {
-    const today = this.getTodayKST();
-    const todayCount = await this.getTodayMessageCount(userId, today);
-
-    if (todayCount >= 2) {
-      throw new HttpException(
-        '오늘 메시지 새로고침 횟수를 초과했습니다. (최대 2회)',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+        if (retry) {
+          const quizzes = await this.quizService.getTodayQuizzes(userId, 10);
+          return this.formatResponse(retry, quizzes);
+        }
+      }
+      throw e;
     }
-
-    return this.generateAndSaveMessage(userId, today);
   }
 
   async completeAction(userId: string, actionId: string) {
@@ -135,13 +139,86 @@ export class PacemakerService {
     };
   }
 
+  async createDailyCheck(userId: string, dto: CreateDailyCheckDto) {
+    // 미래 날짜 차단
+    const today = this.getTodayKST();
+    if (dto.date > today) {
+      throw new HttpException('미래 날짜는 체크할 수 없습니다.', HttpStatus.BAD_REQUEST);
+    }
+
+    // 같은 날짜 중복 → 업데이트
+    const { data: existing } = await this.supabase.db
+      .from('daily_checks')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('date', dto.date)
+      .single();
+
+    if (existing) {
+      const { data: updated, error } = await this.supabase.db
+        .from('daily_checks')
+        .update({
+          status: dto.status,
+          amount: dto.amount ?? 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (error) {
+        throw new Error(`일별 체크 수정 실패: ${error.message}`);
+      }
+
+      return { id: updated.id, date: updated.date, status: updated.status, amount: updated.amount };
+    }
+
+    const { data: saved, error } = await this.supabase.db
+      .from('daily_checks')
+      .insert({
+        user_id: userId,
+        date: dto.date,
+        status: dto.status,
+        amount: dto.amount ?? 0,
+      })
+      .select()
+      .single();
+
+    if (error || !saved) {
+      throw new Error(`일별 체크 저장 실패: ${error?.message || 'INSERT 반환값 없음'}`);
+    }
+
+    return { id: saved.id, date: saved.date, status: saved.status, amount: saved.amount };
+  }
+
+  async getDailyChecks(userId: string, month: string) {
+    // month 형식: 2026-04
+    const startDate = `${month}-01`;
+    const [year, mon] = month.split('-').map(Number);
+    const daysInMonth = new Date(year, mon, 0).getDate();
+    const endDate = `${month}-${daysInMonth}`;
+
+    const { data, error } = await this.supabase.db
+      .from('daily_checks')
+      .select('id, date, status, amount')
+      .eq('user_id', userId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: true });
+
+    if (error) {
+      throw new Error(`일별 체크 조회 실패: ${error.message}`);
+    }
+
+    return data || [];
+  }
+
   // ========== Private ==========
 
-  private async generateAndSaveMessage(userId: string, today: string) {
+  private async generateAndSave(userId: string, today: string) {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
-    // 참조 데이터 수집
     const [latestReport, recentScraps, yesterdayActions] = await Promise.all([
       this.supabase.db
         .from('detailed_reports')
@@ -159,27 +236,18 @@ export class PacemakerService {
       this.getYesterdayActionStatus(userId),
     ]);
 
-    // 학습 콘텐츠 (추천 행동용)
-    const { data: learnContents } = await this.supabase.db
-      .from('learn_contents')
-      .select('id, title, grade')
-      .eq('grade', profile.grade)
-      .limit(5);
-
     const contextData = {
       profile,
       configMap,
       latestReport: latestReport.data,
       recentScraps: recentScraps.data || [],
-      learnContents: learnContents || [],
       yesterdayActionCompleted: yesterdayActions,
       today,
       dayOfWeek: this.getDayOfWeekKR(),
     };
 
-    const generated = await this.messageGenerator.generate(contextData);
+    const message = await this.messageGenerator.generate(contextData);
 
-    // 지출 신호등
     const spendingStatus = {
       todayRemaining: profile.variableCost.daily,
       weeklyRemaining: profile.variableCost.weekly,
@@ -187,17 +255,21 @@ export class PacemakerService {
       level: profile.grade.toLowerCase(),
     };
 
+    // 퀴즈 10개 배정
+    const quizzes = await this.quizService.getTodayQuizzes(userId, 10);
+    const quizIds = quizzes.map((q: any) => q.id);
+
     // DB 저장
     const { data: saved, error: saveError } = await this.supabase.db
       .from('pacemaker_messages')
       .insert({
         user_id: userId,
         date: today,
-        message: generated.message,
+        message,
         grade: profile.grade,
         daily_variable_cost: profile.variableCost.daily,
         spending_status: spendingStatus,
-        actions: generated.actions,
+        quiz_ids: quizIds,
         disclaimer: '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
       })
       .select()
@@ -208,75 +280,27 @@ export class PacemakerService {
       throw new Error(`메시지 저장 실패: ${saveError?.message || 'INSERT 반환값 없음'}`);
     }
 
-    // 추천 행동 저장
-    const savedActions: Array<{ id: string; type: string; contentId: string | null; title: string; label: string; status: string }> = [];
-    for (const action of generated.actions) {
-      const { data: savedAction } = await this.supabase.db
-        .from('pacemaker_actions')
-        .insert({
-          message_id: saved.id,
-          user_id: userId,
-          type: action.type,
-          content_id: action.id || null,
-          title: action.title,
-          label: action.label,
-          status: 'pending',
-        })
-        .select()
-        .single();
+    return this.formatResponse(saved, quizzes);
+  }
 
-      if (savedAction) {
-        savedActions.push({
-          id: savedAction.id,
-          type: savedAction.type,
-          contentId: savedAction.content_id,
-          title: savedAction.title,
-          label: savedAction.label,
-          status: savedAction.status,
-        });
-      }
-    }
-
-    const todayCount = await this.getTodayMessageCount(userId, today);
-
+  private formatResponse(row: any, quizzes: any[]) {
     return {
-      id: saved!.id,
-      date: saved!.date,
-      message: saved!.message,
-      grade: saved!.grade,
-      dailyVariableCost: saved!.daily_variable_cost,
-      spendingStatus,
-      actions: savedActions,
-      disclaimer: saved!.disclaimer,
-      canRefresh: todayCount < 2,
-      createdAt: saved!.created_at,
+      id: row.id,
+      date: row.date,
+      message: row.message,
+      grade: row.grade,
+      dailyVariableCost: row.daily_variable_cost,
+      spendingStatus: row.spending_status || {
+        todayRemaining: row.daily_variable_cost,
+        weeklyRemaining: 0,
+        weeklyUsed: 0,
+        level: (row.grade || 'yellow').toLowerCase(),
+      },
+      quizzes,
+      quizCount: quizzes.length,
+      disclaimer: row.disclaimer || '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
+      createdAt: row.created_at,
     };
-  }
-
-  private async getActionsForMessage(messageId: string) {
-    const { data } = await this.supabase.db
-      .from('pacemaker_actions')
-      .select('id, type, content_id, title, label, status')
-      .eq('message_id', messageId);
-
-    return (data || []).map((a: any) => ({
-      id: a.id,
-      type: a.type,
-      contentId: a.content_id,
-      title: a.title,
-      label: a.label,
-      status: a.status,
-    }));
-  }
-
-  private async getTodayMessageCount(userId: string, today: string): Promise<number> {
-    const { count } = await this.supabase.db
-      .from('pacemaker_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('date', today);
-
-    return count || 0;
   }
 
   private async getYesterdayActionStatus(userId: string): Promise<boolean> {
@@ -293,26 +317,6 @@ export class PacemakerService {
       .limit(1);
 
     return (data?.length || 0) > 0;
-  }
-
-  private formatMessage(cached: any, actions: any[], canRefresh: boolean) {
-    return {
-      id: cached.id,
-      date: cached.date,
-      message: cached.message,
-      grade: cached.grade,
-      dailyVariableCost: cached.daily_variable_cost,
-      spendingStatus: cached.spending_status || {
-        todayRemaining: cached.daily_variable_cost,
-        weeklyRemaining: 0,
-        weeklyUsed: 0,
-        level: (cached.grade || 'yellow').toLowerCase(),
-      },
-      actions,
-      disclaimer: cached.disclaimer || '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
-      canRefresh,
-      createdAt: cached.created_at,
-    };
   }
 
   private getTodayKST(): string {

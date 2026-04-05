@@ -1,9 +1,18 @@
-import { IsInt, IsPositive, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsInt, IsPositive, IsOptional, Min } from 'class-validator';
 
 export class SimulationDto {
   @IsInt()
   @IsPositive()
   age: number;
+
+  @IsInt()
+  @IsPositive()
+  retirementAge: number;
+
+  @IsInt()
+  @IsPositive()
+  @IsOptional()
+  pensionStartAge?: number; // 기본값 65
 
   @IsInt()
   @IsPositive()
@@ -15,14 +24,5 @@ export class SimulationDto {
 
   @IsInt()
   @Min(0)
-  @IsOptional()
-  monthlyInvestment?: number;
-
-  @IsNumber()
-  @IsOptional()
-  expectedReturn?: number;
-
-  @IsInt()
-  @IsOptional()
-  investmentYears?: number;
+  monthlyVariableCost: number;
 }

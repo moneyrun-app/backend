@@ -12,20 +12,9 @@ interface MessageContext {
   configMap: Record<string, string>;
   latestReport: any;
   recentScraps: any[];
-  learnContents: any[];
   yesterdayActionCompleted: boolean;
   today: string;
   dayOfWeek: string;
-}
-
-interface GeneratedMessage {
-  message: string;
-  actions: Array<{
-    type: string;
-    id: string;
-    title: string;
-    label: string;
-  }>;
 }
 
 @Injectable()
@@ -38,20 +27,26 @@ export class MessageGenerator {
     });
   }
 
-  async generate(context: MessageContext): Promise<GeneratedMessage> {
+  async generate(context: MessageContext): Promise<string> {
     const prompt = this.buildPrompt(context);
 
     try {
       const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-6-20260403',
-        max_tokens: 500,
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
         messages: [{ role: 'user', content: prompt }],
       });
 
       const text = response.content[0].type === 'text' ? response.content[0].text : '';
-      return this.parseResponse(text, context.learnContents);
+      const parsed = text.match(/\{[\s\S]*\}/);
+      if (!parsed) return this.getFallback(context);
+
+      const { message } = JSON.parse(parsed[0]);
+      if (!message) return this.getFallback(context);
+
+      return this.filterProhibited(message);
     } catch {
-      return this.getFallbackMessage(context.profile, context.dayOfWeek, context.learnContents);
+      return this.getFallback(context);
     }
   }
 
@@ -76,23 +71,25 @@ export class MessageGenerator {
     }
 
     const actionFeedback = yesterdayActionCompleted
-      ? '\n어제 추천 행동을 완료했어! 이걸 메시지에 칭찬으로 반영해줘.'
+      ? '\n어제 추천 행동을 완료했어! 칭찬을 반영해줘.'
       : '';
+
+    const f = (n: number) => (Math.floor(n / 1000) * 1000).toLocaleString();
 
     return `너는 "머니런 페이스메이커"야. 유저의 찐친(진짜 친한 친구)처럼 돈 관리를 잔소리해주는 역할이야.
 
 ## 유저 데이터
 - 나이: ${profile.age}세
-- 월 실수령액: ${profile.monthlyIncome.toLocaleString()}원
-- 월 고정비: ${profile.monthlyFixedCost.toLocaleString()}원
-- 변동비(하루 예산): ${profile.variableCost.daily.toLocaleString()}원
-- 변동비(주): ${profile.variableCost.weekly.toLocaleString()}원
+- 월 실수령액: ${f(profile.monthlyIncome)}원
+- 월 고정비: ${f(profile.monthlyFixedCost)}원
+- 변동비(하루 예산): ${f(profile.variableCost.daily)}원
+- 변동비(주): ${f(profile.variableCost.weekly)}원
 - 등급: ${profile.grade}
 ${contextInfo}${actionFeedback}
 
 ## 참고 데이터
-- 서울 평균 월세: ${parseInt(configMap['seoul_avg_rent'] || '0').toLocaleString()}원
-- 평균 식비: ${parseInt(configMap['avg_food'] || '0').toLocaleString()}원
+- 서울 평균 월세: ${f(parseInt(configMap['seoul_avg_rent'] || '0'))}원
+- 평균 식비: ${f(parseInt(configMap['avg_food'] || '0'))}원
 - 환율: ${configMap['exchange_rate'] || '정보 없음'}원
 - 오늘: ${today} (${dayOfWeek})
 
@@ -101,58 +98,20 @@ ${toneGuide[profile.grade as keyof typeof toneGuide] || toneGuide.YELLOW}
 
 ## 규칙
 1. 반말 사용. 찐친처럼 자연스럽게.
-2. 메시지는 2-3문장. 짧고 임팩트 있게.
+2. 오늘의 한마디. 2-3문장. 짧고 임팩트 있게. 하루를 시작하며 새겨야 할 한 문장.
 3. 반드시 행동 유도로 끝내기 ("이거 해봐", "이거 읽어봐", "이거 생각해봐").
-4. 수치는 내가 준 데이터만 사용. 새로운 수치를 만들지 마.
+4. 수치는 내가 준 데이터만 사용. 새로운 수치를 만들지 마. 금액은 천원 단위까지만 (백원 이하 버림).
 5. 확정적인 투자 권유, 특정 종목 추천 절대 금지.
-6. JSON으로만 응답해.
+6. JSON으로만 응답해. 다른 텍스트 없이.
 
 ## 응답 형식 (JSON만)
-{
-  "message": "오늘의 한마디 메시지"
-}`;
-  }
-
-  private parseResponse(text: string, learnContents: any[]): GeneratedMessage {
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('JSON not found');
-
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      // 금지 표현 필터링
-      const filtered = this.filterProhibited(parsed.message);
-
-      // 추천 행동: 등급에 맞는 학습 콘텐츠에서 1개 선택
-      const actions: GeneratedMessage['actions'] = [];
-      if (learnContents.length > 0) {
-        const randomContent = learnContents[Math.floor(Math.random() * learnContents.length)];
-        actions.push({
-          type: 'learn_content',
-          id: randomContent.id,
-          title: randomContent.title,
-          label: '이거 읽어봐 →',
-        });
-      }
-
-      return { message: filtered, actions };
-    } catch {
-      return this.getFallbackMessage(
-        { variableCost: { daily: 0 }, grade: 'YELLOW' } as any,
-        '',
-        learnContents,
-      );
-    }
+{ "message": "오늘의 한마디" }`;
   }
 
   private filterProhibited(message: string): string {
     const prohibited = [
-      '반드시 수익',
-      '확실한 투자',
-      '보장된 수익',
-      '무조건 오른다',
-      '꼭 사야',
-      '지금 당장 투자',
+      '반드시 수익', '확실한 투자', '보장된 수익',
+      '무조건 오른다', '꼭 사야', '지금 당장 투자',
     ];
 
     let filtered = message;
@@ -164,28 +123,10 @@ ${toneGuide[profile.grade as keyof typeof toneGuide] || toneGuide.YELLOW}
     return filtered;
   }
 
-  private getFallbackMessage(
-    profile: any,
-    dayOfWeek: string,
-    learnContents: any[],
-  ): GeneratedMessage {
-    const dailyStr = profile.variableCost?.daily
-      ? `${profile.variableCost.daily.toLocaleString()}원`
+  private getFallback(context: MessageContext): string {
+    const daily = context.profile.variableCost?.daily
+      ? `${(Math.floor(context.profile.variableCost.daily / 1000) * 1000).toLocaleString()}원`
       : '알 수 없는 금액';
-
-    const actions: GeneratedMessage['actions'] = [];
-    if (learnContents.length > 0) {
-      actions.push({
-        type: 'learn_content',
-        id: learnContents[0].id,
-        title: learnContents[0].title,
-        label: '이거 읽어봐 →',
-      });
-    }
-
-    return {
-      message: `오늘도 하루 ${dailyStr}이야. 오늘 하루도 알뜰하게 가보자!`,
-      actions,
-    };
+    return `오늘 하루 예산 ${daily}이야. 점심값 아끼면 저녁에 여유 생긴다?`;
   }
 }

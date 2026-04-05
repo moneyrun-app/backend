@@ -1,10 +1,24 @@
-import { IsInt, IsPositive, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsInt, IsPositive, IsString, IsOptional, Min } from 'class-validator';
 
 export class UpdateProfileDto {
+  @IsString()
+  @IsOptional()
+  nickname?: string;
+
   @IsInt()
   @IsPositive()
   @IsOptional()
   age?: number;
+
+  @IsInt()
+  @IsPositive()
+  @IsOptional()
+  retirementAge?: number;
+
+  @IsInt()
+  @IsPositive()
+  @IsOptional()
+  pensionStartAge?: number;
 
   @IsInt()
   @IsPositive()
@@ -19,13 +33,5 @@ export class UpdateProfileDto {
   @IsInt()
   @Min(0)
   @IsOptional()
-  monthlyInvestment?: number;
-
-  @IsNumber()
-  @IsOptional()
-  expectedReturn?: number;
-
-  @IsInt()
-  @IsOptional()
-  investmentYears?: number;
+  monthlyVariableCost?: number;
 }
