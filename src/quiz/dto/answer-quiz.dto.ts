@@ -1,6 +1,8 @@
-import { IsBoolean } from 'class-validator';
+import { IsInt, Min, Max } from 'class-validator';
 
 export class AnswerQuizDto {
-  @IsBoolean()
-  userAnswer: boolean;
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  userAnswer: number;
 }

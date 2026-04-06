@@ -1,16 +1,11 @@
-import { Injectable, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
-import Anthropic from '@anthropic-ai/sdk';
 
 @Injectable()
 export class QuizService {
-  private ai: Anthropic;
+  constructor(private readonly supabase: SupabaseService) {}
 
-  constructor(private readonly supabase: SupabaseService) {
-    this.ai = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-
-  /** 유저가 아직 안 푼 퀴즈 10개 배정 (오답 재출제 30% 포함) */
+  /** 유저가 아직 안 푼 퀴즈 10개 배정 (오답 재출제 30% 포함) — 정답 미노출 */
   async getTodayQuizzes(userId: string, count = 10) {
     const result: any[] = [];
 
@@ -18,9 +13,9 @@ export class QuizService {
     const retryCount = Math.ceil(count * 0.3);
     const { data: wrongNotes } = await this.supabase.db
       .from('wrong_notes')
-      .select('id, quiz_id, quiz:quizzes (id, question, answer, explanation, source, category)')
+      .select('id, quiz_id, quiz:quizzes (id, question, choices, source, category)')
       .eq('user_id', userId)
-      .limit(retryCount * 2); // 여유있게 가져옴
+      .limit(retryCount * 2);
 
     const retryQuizzes = (wrongNotes || [])
       .sort(() => Math.random() - 0.5)
@@ -28,8 +23,7 @@ export class QuizService {
       .map((n: any) => ({
         id: n.quiz?.id,
         question: n.quiz?.question,
-        answer: n.quiz?.answer,
-        explanation: n.quiz?.explanation,
+        choices: n.quiz?.choices,
         source: '오답노트 복습',
         category: n.quiz?.category,
         wrongNoteId: n.id,
@@ -53,7 +47,7 @@ export class QuizService {
 
       let query = this.supabase.db
         .from('quizzes')
-        .select('id, question, answer, explanation, source, category');
+        .select('id, question, choices, source, category');
 
       if (excludeIds.length > 0) {
         query = query.not('id', 'in', `(${excludeIds.join(',')})`);
@@ -65,22 +59,21 @@ export class QuizService {
       result.push(...shuffled.slice(0, remaining).map((q: any) => ({
         id: q.id,
         question: q.question,
-        answer: q.answer,
-        explanation: q.explanation,
+        choices: q.choices,
         source: q.source,
         category: q.category,
       })));
     }
 
-    // 전체 셔플
+    // 전체 셔플 — correct_answer, brief/detailed_explanation 절대 미포함
     return result.sort(() => Math.random() - 0.5);
   }
 
-  /** OX 답변 제출 — 틀리면 AI 상세 설명 생성 + 오답노트 저장 */
-  async submitAnswer(userId: string, quizId: string, userAnswer: boolean) {
+  /** 객관식 답변 제출 — 정답/오답 모두 간단+상세 설명 반환 */
+  async submitAnswer(userId: string, quizId: string, userAnswer: number) {
     const { data: quiz, error: quizError } = await this.supabase.db
       .from('quizzes')
-      .select('id, question, answer, explanation, source, category')
+      .select('id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category')
       .eq('id', quizId)
       .single();
 
@@ -88,7 +81,13 @@ export class QuizService {
       throw new NotFoundException('퀴즈를 찾을 수 없습니다.');
     }
 
-    const correct = userAnswer === quiz.answer;
+    // 보기 범위 검증
+    const choiceCount = (quiz.choices as any[]).length;
+    if (userAnswer < 1 || userAnswer > choiceCount) {
+      throw new BadRequestException(`보기는 1~${choiceCount}번까지입니다.`);
+    }
+
+    const correct = userAnswer === quiz.correct_answer;
 
     // 재출제 퀴즈에서 맞추면 오답노트에서 삭제
     if (correct) {
@@ -118,10 +117,9 @@ export class QuizService {
         });
     }
 
-    // 틀렸으면 오답노트에 자동 저장 + AI 상세 설명
+    // 틀렸으면 오답노트에 자동 저장
     let wrongNoteId: string | null = null;
     if (!correct) {
-      // 이미 오답노트에 있는지 확인
       const { data: existingNote } = await this.supabase.db
         .from('wrong_notes')
         .select('id')
@@ -130,15 +128,13 @@ export class QuizService {
         .single();
 
       if (!existingNote) {
-        const detailedExplanation = await this.generateDetailedExplanation(quiz);
-
         const { data: wrongNote } = await this.supabase.db
           .from('wrong_notes')
           .insert({
             user_id: userId,
             quiz_id: quizId,
             user_answer: userAnswer,
-            detailed_explanation: detailedExplanation,
+            detailed_explanation: quiz.detailed_explanation,
           })
           .select('id')
           .single();
@@ -149,9 +145,10 @@ export class QuizService {
 
     return {
       correct,
-      explanation: correct
-        ? `맞아요! ${quiz.explanation}`
-        : `아쉽! ${quiz.explanation}`,
+      correctAnswer: quiz.correct_answer,
+      userAnswer,
+      briefExplanation: quiz.brief_explanation,
+      detailedExplanation: quiz.detailed_explanation,
       ...(wrongNoteId ? { wrongNoteId } : {}),
     };
   }
@@ -165,7 +162,7 @@ export class QuizService {
         user_answer,
         detailed_explanation,
         created_at,
-        quiz:quizzes (id, question, answer, explanation, source, category)
+        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, source, category)
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
@@ -178,43 +175,14 @@ export class QuizService {
       id: n.id,
       quizId: n.quiz?.id,
       question: n.quiz?.question,
-      correctAnswer: n.quiz?.answer,
+      choices: n.quiz?.choices,
+      correctAnswer: n.quiz?.correct_answer,
       userAnswer: n.user_answer,
-      explanation: n.quiz?.explanation,
+      briefExplanation: n.quiz?.brief_explanation,
       detailedExplanation: n.detailed_explanation,
       source: n.quiz?.source,
       category: n.quiz?.category,
       createdAt: n.created_at,
     }));
-  }
-
-  /** AI로 상세 설명 생성 */
-  private async generateDetailedExplanation(quiz: any): Promise<string> {
-    try {
-      const response = await this.ai.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        messages: [{
-          role: 'user',
-          content: `다음 경제/금융 퀴즈에 대해 초보자가 이해할 수 있도록 상세하게 설명해줘. 마크다운 형식으로, 3~5문장으로 작성해.
-
-퀴즈: "${quiz.question}"
-정답: ${quiz.answer ? 'O' : 'X'}
-간단 설명: ${quiz.explanation}
-카테고리: ${quiz.category}
-
-규칙:
-1. 친근한 톤. 반말.
-2. 핵심 용어는 **볼드** 처리.
-3. 실생활 예시 1개 포함.
-4. 마크다운 텍스트만 응답. JSON 아님.`,
-        }],
-      });
-
-      const text = response.content[0].type === 'text' ? response.content[0].text : '';
-      return text.trim() || quiz.explanation;
-    } catch {
-      return quiz.explanation;
-    }
   }
 }
