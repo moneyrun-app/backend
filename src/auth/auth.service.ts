@@ -110,11 +110,14 @@ export class AuthService {
       })
       .eq('id', userId);
 
-    // 최초 무료 AI 상세 리포트 생성 (비동기)
+    // 최초 무료 AI 상세 리포트 생성
     let firstReportId: string | null = null;
     try {
+      console.log('[리포트] 생성 시작 - userId:', userId);
       firstReportId = await this.bookService.generateDetailedReport(userId, true);
-    } catch {
+      console.log('[리포트] 생성 완료 - reportId:', firstReportId);
+    } catch (err) {
+      console.error('[리포트] 생성 실패:', err);
       // 리포트 생성 실패해도 온보딩은 완료
     }
 

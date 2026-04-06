@@ -31,7 +31,10 @@ export class ReportGenerator {
     configMap: Record<string, string>,
     peer: PeerData,
   ): Promise<DetailedReportV6> {
+    console.log('[리포트] generateDetailedReportV6 시작');
+
     // 1. 서버 계산 — 모든 수치
+    console.log('[리포트] 섹션 계산 시작...');
     const sections: ReportSection[] = [
       this.calculator.calculateSectionA(profile, peer),
       this.calculator.calculateSectionB(profile, peer),
@@ -60,6 +63,8 @@ export class ReportGenerator {
       investmentPeriod: (profile.retirementAge || 55) - (profile.age || 30),
       vestingPeriod: (profile.pensionStartAge || 65) - (profile.retirementAge || 55),
     };
+
+    console.log('[리포트] 섹션 계산 완료. AI 호출 시작...');
 
     // 3. AI 호출 — ai_narrative만 생성
     const narratives = await this.generateNarratives(user, sections);
@@ -98,10 +103,17 @@ export class ReportGenerator {
       });
 
       const text = response.content[0].type === 'text' ? response.content[0].text : '';
+      console.log('[리포트] AI 응답 길이:', text.length, '자');
       const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) throw new Error('JSON array not found');
-      return JSON.parse(jsonMatch[0]);
-    } catch {
+      if (!jsonMatch) {
+        console.error('[리포트] AI 응답에서 JSON 배열 못 찾음. 응답 앞 200자:', text.substring(0, 200));
+        throw new Error('JSON array not found');
+      }
+      const parsed = JSON.parse(jsonMatch[0]);
+      console.log('[리포트] AI narrative 파싱 완료 -', parsed.length, '개 섹션');
+      return parsed;
+    } catch (err) {
+      console.error('[리포트] AI 호출/파싱 실패, fallback 사용:', err);
       // AI 실패 시 기본 텍스트
       return this.getFallbackNarratives(user);
     }

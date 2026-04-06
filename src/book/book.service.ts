@@ -54,35 +54,16 @@ export class BookService {
       throw new NotFoundException('상세 리포트를 찾을 수 없습니다.');
     }
 
-    // v6: sections 구조
-    if (data.report_version === 'v6') {
-      return {
-        id: data.id,
-        title: '시뮬레이터 분석 리포트',
-        reportVersion: 'v6',
-        analyzedAt: data.created_at,
-        grade: data.grade,
-        summary: data.summary,
-        sections: data.sections,
-        userSnapshot: data.user_snapshot,
-        disclaimer: data.sections?.[data.sections.length - 1]?.disclaimer || '',
-        createdAt: data.created_at,
-      };
-    }
-
-    // v1: 기존 호환
     return {
       id: data.id,
       title: '시뮬레이터 분석 리포트',
-      reportVersion: 'v1',
+      reportVersion: 'v6',
       analyzedAt: data.created_at,
       grade: data.grade,
-      surplus: {
-        monthly: data.analysis?.surplus?.monthly || 0,
-        daily: data.analysis?.surplus?.daily || 0,
-      },
-      analysis: data.analysis,
-      content: data.content,
+      summary: data.summary,
+      sections: data.sections,
+      userSnapshot: data.user_snapshot,
+      disclaimer: data.sections?.[data.sections.length - 1]?.disclaimer || '',
       createdAt: data.created_at,
     };
   }
@@ -91,11 +72,19 @@ export class BookService {
    * 상세 리포트 생성 (온보딩 시 호출)
    */
   async generateDetailedReport(userId: string, isFree: boolean): Promise<string> {
+    console.log('[리포트] book.service 진입 - userId:', userId);
+
     const profile = await this.financeService.getFullProfile(userId);
+    console.log('[리포트] 프로필 조회 완료 - grade:', profile.grade, 'income:', profile.monthlyIncome);
+
     const configMap = await this.constantsService.getConfigMap();
+    console.log('[리포트] configMap 조회 완료 - 키 개수:', Object.keys(configMap).length);
+
     const peerData = this.constantsService.getPeerData(configMap, profile.age);
+    console.log('[리포트] peerData 조회 완료 - ageGroup:', peerData.ageGroupLabel);
 
     const report = await this.reportGenerator.generateDetailedReportV6(profile, configMap, peerData);
+    console.log('[리포트] v6 생성 완료 - sections:', report.sections.length, '개');
 
     const userSnapshot = {
       nickname: profile.nickname,
@@ -109,13 +98,13 @@ export class BookService {
       pensionStartAge: profile.pensionStartAge,
     };
 
+    console.log('[리포트] DB 저장 시도...');
     const { data: saved, error } = await this.supabase.db
       .from('detailed_reports')
       .insert({
         user_id: userId,
         title: report.title,
         summary: report.summary,
-        content: '',
         grade: profile.grade,
         sections: report.sections,
         report_version: 'v6',
@@ -126,8 +115,10 @@ export class BookService {
       .single();
 
     if (error) {
+      console.error('[리포트] DB 저장 실패:', error);
       throw new Error(`리포트 저장 실패: ${error.message}`);
     }
+    console.log('[리포트] DB 저장 완료 - id:', saved!.id);
 
     // Section I 용어사전 → 마이북 저장
     const glossarySection = report.sections.find((s: any) => s.section === 'I');
