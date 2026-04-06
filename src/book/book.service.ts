@@ -26,7 +26,7 @@ export class BookService {
   async getDetailedReports(userId: string) {
     const { data: items } = await this.supabase.db
       .from('detailed_reports')
-      .select('id, summary, created_at')
+      .select('id, summary, report_version, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -35,6 +35,7 @@ export class BookService {
         id: r.id,
         title: '시뮬레이터 분석 리포트',
         summary: r.summary,
+        reportVersion: r.report_version || 'v1',
         analyzedAt: r.created_at,
         createdAt: r.created_at,
       })),
@@ -53,9 +54,27 @@ export class BookService {
       throw new NotFoundException('상세 리포트를 찾을 수 없습니다.');
     }
 
+    // v6: sections 구조
+    if (data.report_version === 'v6') {
+      return {
+        id: data.id,
+        title: '시뮬레이터 분석 리포트',
+        reportVersion: 'v6',
+        analyzedAt: data.created_at,
+        grade: data.grade,
+        summary: data.summary,
+        sections: data.sections,
+        userSnapshot: data.user_snapshot,
+        disclaimer: data.sections?.[data.sections.length - 1]?.disclaimer || '',
+        createdAt: data.created_at,
+      };
+    }
+
+    // v1: 기존 호환
     return {
       id: data.id,
       title: '시뮬레이터 분석 리포트',
+      reportVersion: 'v1',
       analyzedAt: data.created_at,
       grade: data.grade,
       surplus: {
@@ -70,23 +89,37 @@ export class BookService {
 
   /**
    * 상세 리포트 생성 (온보딩 시 호출)
-   * @returns 생성된 리포트 ID
    */
   async generateDetailedReport(userId: string, isFree: boolean): Promise<string> {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
+    const peerData = this.constantsService.getPeerData(configMap, profile.age);
 
-    const report = await this.reportGenerator.generateDetailedReport(profile, configMap);
+    const report = await this.reportGenerator.generateDetailedReportV6(profile, configMap, peerData);
+
+    const userSnapshot = {
+      nickname: profile.nickname,
+      age: profile.age,
+      income: profile.monthlyIncome,
+      fixedCost: profile.monthlyFixedCost,
+      variableCost: profile.monthlyVariableCost,
+      surplus: profile.monthlyIncome - (profile.monthlyFixedCost || 0) - (profile.monthlyVariableCost || 0),
+      grade: profile.grade,
+      retirementAge: profile.retirementAge,
+      pensionStartAge: profile.pensionStartAge,
+    };
 
     const { data: saved, error } = await this.supabase.db
       .from('detailed_reports')
       .insert({
         user_id: userId,
-        title: '시뮬레이터 분석 리포트',
+        title: report.title,
         summary: report.summary,
-        content: report.content,
+        content: '',
         grade: profile.grade,
-        analysis: report.analysis,
+        sections: report.sections,
+        report_version: 'v6',
+        user_snapshot: userSnapshot,
         is_free: isFree,
       })
       .select('id')
@@ -94,6 +127,19 @@ export class BookService {
 
     if (error) {
       throw new Error(`리포트 저장 실패: ${error.message}`);
+    }
+
+    // Section I 용어사전 → 마이북 저장
+    const glossarySection = report.sections.find((s: any) => s.section === 'I');
+    if (glossarySection) {
+      await this.supabase.db
+        .from('user_glossaries')
+        .insert({
+          user_id: userId,
+          report_id: saved!.id,
+          terms: (glossarySection as any).terms,
+          grade: profile.grade,
+        });
     }
 
     return saved!.id;
@@ -411,6 +457,29 @@ export class BookService {
         .insert({ user_id: userId, content_id: contentId });
       return { isScrapped: true };
     }
+  }
+
+  // ========== 금융 용어 사전 ==========
+
+  async getGlossary(userId: string) {
+    const { data } = await this.supabase.db
+      .from('user_glossaries')
+      .select('id, terms, grade, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!data) {
+      return { terms: [], grade: null, message: '아직 리포트를 생성하지 않았어요. 리포트를 생성하면 용어사전이 선물로 저장됩니다!' };
+    }
+
+    return {
+      terms: data.terms,
+      grade: data.grade,
+      message: '여기까지 읽어주셔서 감사해요. 금융용어사전을 선물로 마이북에 넣어드렸어요!',
+      createdAt: data.created_at,
+    };
   }
 
   // ========== Utils ==========

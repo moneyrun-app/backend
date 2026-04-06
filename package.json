@@ -17,7 +17,14 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "quiz:process-moef": "npx tsx scripts/process-moef-csv.ts",
+    "quiz:fetch-moef": "npx tsx scripts/fetch-moef-quiz.ts",
+    "quiz:fetch-seibro": "npx tsx scripts/fetch-seibro-terms.ts",
+    "quiz:fetch-ecos": "npx tsx scripts/fetch-ecos-words.ts",
+    "quiz:generate": "npx tsx scripts/generate-quizzes.ts",
+    "quiz:insert": "npx tsx scripts/bulk-insert-quizzes.ts",
+    "quiz:all": "npm run quiz:fetch-moef && npm run quiz:fetch-seibro && npm run quiz:fetch-ecos && npm run quiz:generate && npm run quiz:insert"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
@@ -30,6 +37,7 @@
     "@supabase/supabase-js": "^2.101.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "dotenv": "^17.4.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
@@ -46,10 +54,13 @@
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
+    "@types/xml2js": "^0.4.14",
+    "csv-parse": "^6.2.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",
     "globals": "^16.0.0",
+    "iconv-lite": "^0.7.2",
     "jest": "^30.0.0",
     "prettier": "^3.4.2",
     "source-map-support": "^0.5.21",
@@ -58,8 +69,10 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.3",
-    "typescript-eslint": "^8.20.0"
+    "typescript-eslint": "^8.20.0",
+    "xml2js": "^0.6.2"
   },
   "jest": {
     "moduleFileExtensions": [

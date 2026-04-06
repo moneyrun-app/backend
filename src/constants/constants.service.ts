@@ -47,4 +47,37 @@ export class ConstantsService {
     }
     return map;
   }
+
+  /** JSON 값을 파싱해서 반환. 나이대별/국가별 데이터 조회용 */
+  getJsonConfig(configMap: Record<string, string>, key: string): any {
+    const raw = configMap[key];
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  /** 나이대별 또래 데이터를 한번에 가져오기 */
+  getPeerData(configMap: Record<string, string>, age: number) {
+    const ageGroup = age < 30 ? '20s' : age < 40 ? '30s' : age < 50 ? '40s' : '50s';
+    const ageGroupLabel = age < 30 ? '20대' : age < 40 ? '30대' : age < 50 ? '40대' : '50대';
+
+    const get = (key: string) => {
+      const data = this.getJsonConfig(configMap, key);
+      return data?.[ageGroup] ?? 0;
+    };
+
+    return {
+      ageGroup,
+      ageGroupLabel,
+      avgIncome: get('peer_avg_income'),
+      avgSavingsRate: get('peer_avg_savings_rate'),
+      avgExpenseRatio: get('peer_avg_expense_ratio'),
+      avgFixedRatio: get('peer_avg_fixed_ratio'),
+      avgVariableRatio: get('peer_avg_variable_ratio'),
+      avgSurplusRatio: get('peer_avg_surplus_ratio'),
+    };
+  }
 }

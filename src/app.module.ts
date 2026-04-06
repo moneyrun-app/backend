@@ -11,6 +11,7 @@ import { PaymentModule } from './payment/payment.module';
 import { ConstantsModule } from './constants/constants.module';
 import { QuizModule } from './quiz/quiz.module';
 import { AdminModule } from './admin/admin.module';
+import { StatisticsModule } from './statistics/statistics.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AdminModule } from './admin/admin.module';
     ConstantsModule,
     QuizModule,
     AdminModule,
+    StatisticsModule,
   ],
 })
 export class AppModule {}

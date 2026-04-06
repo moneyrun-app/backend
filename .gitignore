@@ -45,3 +45,6 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# quiz data (수집/가공 중간 결과물)
+/data

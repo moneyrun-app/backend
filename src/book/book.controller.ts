@@ -96,4 +96,11 @@ export class BookController {
     return { message: '삭제되었습니다.' };
   }
 
+  // ========== 금융 용어 사전 (선물) ==========
+
+  @Get('glossary')
+  async getGlossary(@CurrentUser('id') userId: string) {
+    return this.bookService.getGlossary(userId);
+  }
+
 }
