@@ -160,9 +160,8 @@ export class QuizService {
       .select(`
         id,
         user_answer,
-        detailed_explanation,
         created_at,
-        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, source, category)
+        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category)
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
@@ -179,7 +178,7 @@ export class QuizService {
       correctAnswer: n.quiz?.correct_answer,
       userAnswer: n.user_answer,
       briefExplanation: n.quiz?.brief_explanation,
-      detailedExplanation: n.detailed_explanation,
+      detailedExplanation: n.quiz?.detailed_explanation,
       source: n.quiz?.source,
       category: n.quiz?.category,
       createdAt: n.created_at,

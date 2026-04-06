@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Query, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, UseGuards } from '@nestjs/common';
 import { PacemakerService } from './pacemaker.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -11,16 +11,11 @@ export class PacemakerController {
   constructor(private readonly pacemakerService: PacemakerService) {}
 
   @Get('today')
-  async getToday(@CurrentUser('id') userId: string) {
-    return this.pacemakerService.getTodayMessage(userId);
-  }
-
-  @Post('actions/:id/complete')
-  async completeAction(
+  async getToday(
     @CurrentUser('id') userId: string,
-    @Param('id') actionId: string,
+    @CurrentUser('nickname') nickname: string,
   ) {
-    return this.pacemakerService.completeAction(userId, actionId);
+    return this.pacemakerService.getTodayMessage(userId, nickname);
   }
 
   @Post('feedback')
@@ -45,6 +40,14 @@ export class PacemakerController {
     @Query('month') month: string, // 2026-04
   ) {
     return this.pacemakerService.getDailyChecks(userId, month);
+  }
+
+  @Get('weekly-summary')
+  async getWeeklySummary(
+    @CurrentUser('id') userId: string,
+    @Query('date') date: string, // 2026-04-06
+  ) {
+    return this.pacemakerService.getWeeklySummary(userId, date);
   }
 
   @Get('history')

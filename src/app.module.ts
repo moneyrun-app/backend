@@ -10,6 +10,7 @@ import { BookModule } from './book/book.module';
 import { PaymentModule } from './payment/payment.module';
 import { ConstantsModule } from './constants/constants.module';
 import { QuizModule } from './quiz/quiz.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { QuizModule } from './quiz/quiz.module';
     PaymentModule,
     ConstantsModule,
     QuizModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

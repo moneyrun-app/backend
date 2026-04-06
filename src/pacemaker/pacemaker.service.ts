@@ -1,6 +1,5 @@
 import {
   Injectable,
-  NotFoundException,
   HttpException,
   HttpStatus,
 } from '@nestjs/common';
@@ -22,10 +21,9 @@ export class PacemakerService {
     private readonly quizService: QuizService,
   ) {}
 
-  async getTodayMessage(userId: string) {
+  async getTodayMessage(userId: string, nickname: string) {
     const today = this.getTodayKST();
 
-    // 오늘 이미 생성된 메시지가 있는지 확인
     const { data: cached } = await this.supabase.db
       .from('pacemaker_messages')
       .select('*')
@@ -39,11 +37,9 @@ export class PacemakerService {
       return this.formatResponse(cached, quizzes);
     }
 
-    // 없으면 AI로 메시지 1개 생성
     try {
-      return await this.generateAndSave(userId, today);
+      return await this.generateAndSave(userId, nickname, today);
     } catch (e: any) {
-      // 동시 요청으로 유니크 제약 위반 시 → 캐시 반환
       if (e.message?.includes('duplicate') || e.message?.includes('unique')) {
         const { data: retry } = await this.supabase.db
           .from('pacemaker_messages')
@@ -60,40 +56,6 @@ export class PacemakerService {
       }
       throw e;
     }
-  }
-
-  async completeAction(userId: string, actionId: string) {
-    const { data: action, error } = await this.supabase.db
-      .from('pacemaker_actions')
-      .select('*')
-      .eq('id', actionId)
-      .eq('user_id', userId)
-      .single();
-
-    if (error || !action) {
-      throw new NotFoundException('추천 행동을 찾을 수 없습니다.');
-    }
-
-    if (action.status === 'completed') {
-      throw new HttpException('이미 완료된 행동입니다.', HttpStatus.BAD_REQUEST);
-    }
-
-    const { error: updateError } = await this.supabase.db
-      .from('pacemaker_actions')
-      .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', actionId);
-
-    if (updateError) {
-      throw new Error(`행동 완료 처리 실패: ${updateError.message}`);
-    }
-
-    return {
-      status: 'completed',
-      completedAt: new Date().toISOString(),
-    };
   }
 
   async submitFeedback(userId: string, dto: FeedbackDto) {
@@ -119,7 +81,7 @@ export class PacemakerService {
     const [messagesRes, countRes] = await Promise.all([
       this.supabase.db
         .from('pacemaker_messages')
-        .select('id, date, message, grade')
+        .select('id, date, message, grade, theme, quote')
         .eq('user_id', userId)
         .order('date', { ascending: false })
         .range(offset, offset + limit - 1),
@@ -139,14 +101,14 @@ export class PacemakerService {
     };
   }
 
+  // ========== 일별 지출 체크 ==========
+
   async createDailyCheck(userId: string, dto: CreateDailyCheckDto) {
-    // 미래 날짜 차단
     const today = this.getTodayKST();
     if (dto.date > today) {
       throw new HttpException('미래 날짜는 체크할 수 없습니다.', HttpStatus.BAD_REQUEST);
     }
 
-    // 같은 날짜 중복 → 업데이트
     const { data: existing } = await this.supabase.db
       .from('daily_checks')
       .select('id')
@@ -192,74 +154,188 @@ export class PacemakerService {
   }
 
   async getDailyChecks(userId: string, month: string) {
-    // month 형식: 2026-04
     const startDate = `${month}-01`;
     const [year, mon] = month.split('-').map(Number);
     const daysInMonth = new Date(year, mon, 0).getDate();
     const endDate = `${month}-${daysInMonth}`;
 
-    const { data, error } = await this.supabase.db
-      .from('daily_checks')
-      .select('id, date, status, amount')
-      .eq('user_id', userId)
-      .gte('date', startDate)
-      .lte('date', endDate)
-      .order('date', { ascending: true });
+    const [checksRes, profileRes] = await Promise.all([
+      this.supabase.db
+        .from('daily_checks')
+        .select('id, date, status, amount')
+        .eq('user_id', userId)
+        .gte('date', startDate)
+        .lte('date', endDate)
+        .order('date', { ascending: true }),
+      this.financeService.getFullProfile(userId),
+    ]);
 
-    if (error) {
-      throw new Error(`일별 체크 조회 실패: ${error.message}`);
+    if (checksRes.error) {
+      throw new Error(`일별 체크 조회 실패: ${checksRes.error.message}`);
     }
 
-    return data || [];
+    const days = checksRes.data || [];
+    const dailyBudget = profileRes.variableCost.daily;
+
+    const daysTracked = days.length;
+    const daysUnder = days.filter((d: any) => d.status === 'under').length;
+    const daysOver = days.filter((d: any) => d.status === 'over').length;
+    const totalSpent = days.reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
+    const adjustedBudget = dailyBudget * daysTracked;
+    const spentRate = adjustedBudget > 0 ? Math.round((totalSpent / adjustedBudget) * 1000) / 10 : 0;
+
+    // 오늘 기준 역순 연속 절약일 (under) — 미체크 날은 무시
+    const todayStr = this.getTodayKST();
+    const currentStreak = this.calculateStreak(days, todayStr);
+    const bestStreak = this.calculateBestStreak(days);
+
+    return {
+      days,
+      summary: {
+        totalSpent,
+        adjustedBudget,
+        dailyBudget,
+        monthlyBudget: dailyBudget * daysInMonth,
+        spentRate,
+        daysInMonth,
+        daysTracked,
+        daysUnder,
+        daysOver,
+        currentStreak,
+        bestStreak,
+      },
+    };
   }
 
-  // ========== Private ==========
+  // ========== 주간 요약 ==========
 
-  private async generateAndSave(userId: string, today: string) {
+  async getWeeklySummary(userId: string, date: string) {
+    const { weekStart, weekEnd } = this.getWeekRange(date);
+
+    // 이미 저장된 주간 요약이 있는지 확인
+    const { data: existing } = await this.supabase.db
+      .from('weekly_summaries')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('week_start', weekStart)
+      .single();
+
+    if (existing) {
+      return this.formatWeeklySummary(existing);
+    }
+
+    // 없으면 계산해서 반환 (지난 주면 저장도 함)
+    return this.calculateWeeklySummary(userId, weekStart, weekEnd);
+  }
+
+  private async calculateWeeklySummary(userId: string, weekStart: string, weekEnd: string) {
+    const [checksRes, profileRes] = await Promise.all([
+      this.supabase.db
+        .from('daily_checks')
+        .select('id, date, status, amount')
+        .eq('user_id', userId)
+        .gte('date', weekStart)
+        .lte('date', weekEnd)
+        .order('date', { ascending: true }),
+      this.financeService.getFullProfile(userId),
+    ]);
+
+    const days = checksRes.data || [];
+    const dailyBudget = profileRes.variableCost.daily;
+
+    const daysTracked = days.length;
+    const daysSkipped = 7 - daysTracked;
+    const daysUnder = days.filter((d: any) => d.status === 'under').length;
+    const daysOver = days.filter((d: any) => d.status === 'over').length;
+    const totalSpent = days.reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
+    const adjustedBudget = dailyBudget * daysTracked;
+    const spentRate = adjustedBudget > 0 ? Math.round((totalSpent / adjustedBudget) * 1000) / 10 : 0;
+
+    const summary = {
+      weekStart,
+      weekEnd,
+      daysTracked,
+      daysSkipped,
+      daysUnder,
+      daysOver,
+      totalSpent,
+      adjustedBudget,
+      spentRate,
+      remainingBudget: adjustedBudget - totalSpent,
+    };
+
+    // 지난 주(weekEnd < 오늘)면 DB에 저장
+    const today = this.getTodayKST();
+    if (weekEnd < today) {
+      await this.supabase.db
+        .from('weekly_summaries')
+        .upsert({
+          user_id: userId,
+          week_start: weekStart,
+          week_end: weekEnd,
+          days_tracked: daysTracked,
+          days_skipped: daysSkipped,
+          days_under: daysUnder,
+          days_over: daysOver,
+          total_spent: totalSpent,
+          adjusted_budget: adjustedBudget,
+          spent_rate: spentRate,
+        }, { onConflict: 'user_id,week_start' });
+    }
+
+    return summary;
+  }
+
+  private formatWeeklySummary(row: any) {
+    return {
+      weekStart: row.week_start,
+      weekEnd: row.week_end,
+      daysTracked: row.days_tracked,
+      daysSkipped: row.days_skipped,
+      daysUnder: row.days_under,
+      daysOver: row.days_over,
+      totalSpent: row.total_spent,
+      adjustedBudget: row.adjusted_budget,
+      spentRate: Number(row.spent_rate),
+      remainingBudget: row.adjusted_budget - row.total_spent,
+    };
+  }
+
+  // ========== Private: 메시지 생성 ==========
+
+  private async generateAndSave(userId: string, nickname: string, today: string) {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
-    const [latestReport, recentScraps, yesterdayActions] = await Promise.all([
-      this.supabase.db
-        .from('detailed_reports')
-        .select('title, summary')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single(),
+    const [recentScraps, spending] = await Promise.all([
       this.supabase.db
         .from('external_scraps')
         .select('title, channel')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(5),
-      this.getYesterdayActionStatus(userId),
+      this.getSpendingData(userId, profile.variableCost.daily),
     ]);
+
+    const now = new Date();
+    const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
 
     const contextData = {
       profile,
+      nickname,
       configMap,
-      latestReport: latestReport.data,
       recentScraps: recentScraps.data || [],
-      yesterdayActionCompleted: yesterdayActions,
+      spending,
       today,
       dayOfWeek: this.getDayOfWeekKR(),
+      dayOfWeekIndex: kst.getUTCDay(),
     };
 
-    const message = await this.messageGenerator.generate(contextData);
+    const { message, theme, quote } = await this.messageGenerator.generate(contextData);
 
-    const spendingStatus = {
-      todayRemaining: profile.variableCost.daily,
-      weeklyRemaining: profile.variableCost.weekly,
-      weeklyUsed: 0,
-      level: profile.grade.toLowerCase(),
-    };
-
-    // 퀴즈 10개 배정
     const quizzes = await this.quizService.getTodayQuizzes(userId, 10);
     const quizIds = quizzes.map((q: any) => q.id);
 
-    // DB 저장
     const { data: saved, error: saveError } = await this.supabase.db
       .from('pacemaker_messages')
       .insert({
@@ -268,8 +344,14 @@ export class PacemakerService {
         message,
         grade: profile.grade,
         daily_variable_cost: profile.variableCost.daily,
-        spending_status: spendingStatus,
+        spending_status: {
+          todayRemaining: profile.variableCost.daily,
+          weeklyRemaining: profile.variableCost.weekly,
+          level: profile.grade.toLowerCase(),
+        },
         quiz_ids: quizIds,
+        theme,
+        quote,
         disclaimer: '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
       })
       .select()
@@ -283,17 +365,61 @@ export class PacemakerService {
     return this.formatResponse(saved, quizzes);
   }
 
+  /** 어제 지출 + 이번 주 지출 데이터 조회 */
+  private async getSpendingData(userId: string, dailyBudget: number) {
+    const today = this.getTodayKST();
+    const yesterday = this.addDays(today, -1);
+    const { weekStart } = this.getWeekRange(today);
+
+    const [yesterdayRes, weekRes] = await Promise.all([
+      this.supabase.db
+        .from('daily_checks')
+        .select('status, amount')
+        .eq('user_id', userId)
+        .eq('date', yesterday)
+        .single(),
+      this.supabase.db
+        .from('daily_checks')
+        .select('date, status, amount')
+        .eq('user_id', userId)
+        .gte('date', weekStart)
+        .lt('date', today)
+        .order('date', { ascending: true }),
+    ]);
+
+    const weekDays = weekRes.data || [];
+    const weekTotalSpent = weekDays.reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
+    const weekDaysTracked = weekDays.length;
+
+    // 연속 절약일 (역순, 미체크 무시)
+    let currentStreak = 0;
+    for (let i = weekDays.length - 1; i >= 0; i--) {
+      if (weekDays[i].status === 'under') currentStreak++;
+      else break;
+    }
+
+    return {
+      yesterdayAmount: yesterdayRes.data?.amount ?? null,
+      yesterdayStatus: yesterdayRes.data?.status ?? null,
+      weekTotalSpent,
+      weekDaysTracked,
+      weekAdjustedBudget: dailyBudget * weekDaysTracked,
+      currentStreak,
+    };
+  }
+
   private formatResponse(row: any, quizzes: any[]) {
     return {
       id: row.id,
       date: row.date,
       message: row.message,
       grade: row.grade,
+      theme: row.theme || null,
+      quote: row.quote || null,
       dailyVariableCost: row.daily_variable_cost,
       spendingStatus: row.spending_status || {
         todayRemaining: row.daily_variable_cost,
         weeklyRemaining: 0,
-        weeklyUsed: 0,
         level: (row.grade || 'yellow').toLowerCase(),
       },
       quizzes,
@@ -303,20 +429,56 @@ export class PacemakerService {
     };
   }
 
-  private async getYesterdayActionStatus(userId: string): Promise<boolean> {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+  // ========== 유틸 ==========
 
-    const { data } = await this.supabase.db
-      .from('pacemaker_actions')
-      .select('status')
-      .eq('user_id', userId)
-      .eq('status', 'completed')
-      .gte('completed_at', yesterdayStr)
-      .limit(1);
+  /** 연속 절약일 계산 (역순, 미체크 날 무시) */
+  private calculateStreak(days: any[], todayStr: string): number {
+    const sorted = [...days]
+      .filter((d: any) => d.date <= todayStr)
+      .sort((a: any, b: any) => b.date.localeCompare(a.date));
 
-    return (data?.length || 0) > 0;
+    let streak = 0;
+    for (const day of sorted) {
+      if (day.status === 'under') streak++;
+      else break;
+    }
+    return streak;
+  }
+
+  /** 최대 연속 절약일 계산 */
+  private calculateBestStreak(days: any[]): number {
+    let best = 0;
+    let current = 0;
+    for (const day of days) {
+      if (day.status === 'under') {
+        current++;
+        if (current > best) best = current;
+      } else {
+        current = 0;
+      }
+    }
+    return best;
+  }
+
+  /** 날짜가 속한 주의 월~일 범위 */
+  private getWeekRange(dateStr: string): { weekStart: string; weekEnd: string } {
+    const date = new Date(dateStr + 'T00:00:00Z');
+    const day = date.getUTCDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(date);
+    monday.setUTCDate(date.getUTCDate() + diffToMonday);
+    const sunday = new Date(monday);
+    sunday.setUTCDate(monday.getUTCDate() + 6);
+    return {
+      weekStart: monday.toISOString().split('T')[0],
+      weekEnd: sunday.toISOString().split('T')[0],
+    };
+  }
+
+  private addDays(dateStr: string, days: number): string {
+    const date = new Date(dateStr + 'T00:00:00Z');
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().split('T')[0];
   }
 
   private getTodayKST(): string {

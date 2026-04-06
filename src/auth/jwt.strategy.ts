@@ -16,7 +16,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: { sub: string }) {
     const { data: user } = await this.supabase.db
       .from('users')
-      .select('id, nickname, email, has_completed_onboarding')
+      .select('id, nickname, email, has_completed_onboarding, role')
       .eq('id', payload.sub)
       .single();
 
