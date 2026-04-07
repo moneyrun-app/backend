@@ -13,7 +13,7 @@ import {
 import { BookService } from './book.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { CreateWeeklyReportDto } from './dto/create-weekly-report.dto';
+import { CreateMonthlyReportDto } from './dto/create-monthly-report.dto';
 import { CreateScrapDto } from './dto/create-scrap.dto';
 import { GenerateReportDto } from './dto/generate-report.dto';
 
@@ -47,18 +47,24 @@ export class BookController {
   }
 
 
-  // ========== 월간 리포트 ==========
+  // ========== 월간 리포트 v2 ==========
 
   @Get('monthly-reports')
   async getMonthlyReports(@CurrentUser('id') userId: string) {
     return this.bookService.getMonthlyReports(userId);
   }
 
+  /** 제안 항목 조회 (리포트 생성 전, OX 체크용) */
+  @Get('monthly-reports/proposals')
+  async getProposalItems(@CurrentUser('id') userId: string) {
+    return this.bookService.getProposalItems(userId);
+  }
+
   @Post('monthly-reports')
   @HttpCode(HttpStatus.CREATED)
   async createMonthlyReport(
     @CurrentUser('id') userId: string,
-    @Body() dto: CreateWeeklyReportDto,
+    @Body() dto: CreateMonthlyReportDto,
   ) {
     return this.bookService.createMonthlyReport(userId, dto);
   }

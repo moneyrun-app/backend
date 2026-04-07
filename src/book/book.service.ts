@@ -9,7 +9,9 @@ import { FinanceService } from '../finance/finance.service';
 import { ConstantsService } from '../constants/constants.service';
 import { ReportGenerator } from './report.generator';
 import { ScraperService } from './scraper.service';
-import { CreateWeeklyReportDto } from './dto/create-weekly-report.dto';
+import { MonthlyReportCollector } from './monthly-report.collector';
+import { MonthlyReportGenerator } from './monthly-report.generator';
+import { CreateMonthlyReportDto } from './dto/create-monthly-report.dto';
 
 @Injectable()
 export class BookService {
@@ -19,6 +21,8 @@ export class BookService {
     private readonly constantsService: ConstantsService,
     private readonly reportGenerator: ReportGenerator,
     private readonly scraperService: ScraperService,
+    private readonly monthlyCollector: MonthlyReportCollector,
+    private readonly monthlyGenerator: MonthlyReportGenerator,
   ) {}
 
   // ========== AI 상세 리포트 ==========
@@ -169,12 +173,12 @@ export class BookService {
     };
   }
 
-  // ========== 월간 리포트 ==========
+  // ========== 월간 리포트 v2 ==========
 
   async getMonthlyReports(userId: string) {
     const { data } = await this.supabase.db
       .from('monthly_reports')
-      .select('id, month, summary, created_at')
+      .select('id, month, summary, badges_earned, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -182,61 +186,96 @@ export class BookService {
       id: r.id,
       month: r.month,
       summary: r.summary,
+      badgesEarned: r.badges_earned || [],
       createdAt: r.created_at,
     }));
   }
 
-  async createMonthlyReport(userId: string, dto: CreateWeeklyReportDto) {
-    const profile = await this.financeService.getFullProfile(userId);
-    const configMap = await this.constantsService.getConfigMap();
-
+  async createMonthlyReport(userId: string, dto: CreateMonthlyReportDto) {
     const month = this.getCurrentMonth();
-    const monthStart = `${month}-01`;
-    const [y, m] = month.split('-').map(Number);
-    const monthEnd = `${month}-${new Date(y, m, 0).getDate()}`;
 
-    const { data: monthMessages } = await this.supabase.db
-      .from('pacemaker_messages')
-      .select('message, date')
-      .eq('user_id', userId)
-      .gte('date', monthStart)
-      .lte('date', monthEnd);
-
-    // 일별 체크 데이터 포함
-    const { data: dailyChecks } = await this.supabase.db
-      .from('daily_checks')
-      .select('date, status')
-      .eq('user_id', userId)
-      .gte('date', monthStart)
-      .lte('date', monthEnd);
-
-    const generated = await this.reportGenerator.generateWeeklyReport(
-      profile,
-      configMap,
-      dto.weekStatus,
-      monthMessages || [],
+    // 1. 데이터 수집 (소비, 제안 이행, 퀴즈, 배지)
+    const reportData = await this.monthlyCollector.collect(
+      userId,
+      month,
+      dto.proposalChecks || [],
     );
 
-    const { data: saved } = await this.supabase.db
+    // 2. AI narrative 생성
+    const narratives = await this.monthlyGenerator.generateNarratives(
+      reportData,
+      { overallFeeling: dto.overallFeeling, memo: dto.memo },
+    );
+
+    // 3. 섹션 조립
+    const sections = {
+      spending: {
+        ...reportData.spending,
+        ai_narrative: narratives.spending,
+      },
+      proposals: {
+        ...reportData.proposals,
+        ai_narrative: narratives.proposals,
+      },
+      goals: {
+        challenge: narratives.goals,
+        badges: reportData.badges,
+        ai_narrative: narratives.goals,
+      },
+      learning: {
+        ...reportData.learning,
+        ai_narrative: narratives.learning,
+      },
+      rewards: {
+        earnedBadges: reportData.badges.filter(b => b.earned),
+        levelUpKit: {
+          available: reportData.learning.wrongNotes.length > 0,
+          wrongQuizCount: reportData.learning.wrongNotes.length,
+        },
+        ai_narrative: narratives.rewards,
+      },
+    };
+
+    // 4. 요약 생성
+    const f = (n: number) => (Math.floor(n / 1000) * 1000).toLocaleString();
+    const earnedCount = reportData.badges.filter(b => b.earned).length;
+    const summary = `${month} 총 지출 ${f(reportData.spending.totalSpent)}원, FQ ${reportData.learning.fqScore}점, 배지 ${earnedCount}개 달성.`;
+
+    // 5. DB 저장
+    const { data: saved, error } = await this.supabase.db
       .from('monthly_reports')
       .insert({
         user_id: userId,
         month,
-        summary: generated.summary,
-        guide: generated.guide,
-        user_input: dto.weekStatus,
-        weekly_stats: {
-          dailyChecks: dailyChecks || [],
-          ...generated.weeklyStats,
+        summary,
+        guide: narratives.spending,  // 하위 호환용
+        user_input: {
+          overallFeeling: dto.overallFeeling,
+          memo: dto.memo || null,
         },
+        sections,
+        badges_earned: reportData.badges.filter(b => b.earned).map(b => ({
+          code: b.code,
+          name: b.name,
+          icon: b.icon,
+        })),
+        proposal_checks: dto.proposalChecks || [],
       })
       .select()
       .single();
+
+    if (error) {
+      throw new Error(`월간 리포트 저장 실패: ${error.message}`);
+    }
+
+    // 6. 스냅샷 저장 (다음달 전월 비교용)
+    await this.monthlyCollector.saveSnapshot(userId, month, reportData);
 
     return {
       id: saved!.id,
       month: saved!.month,
       summary: saved!.summary,
+      badgesEarned: saved!.badges_earned,
       createdAt: saved!.created_at,
     };
   }
@@ -257,11 +296,17 @@ export class BookService {
       id: data.id,
       month: data.month,
       summary: data.summary,
-      guide: data.guide,
-      monthlyStats: data.weekly_stats || {},
+      sections: data.sections || {},
+      badgesEarned: data.badges_earned || [],
+      proposalChecks: data.proposal_checks || [],
       userInput: data.user_input,
       createdAt: data.created_at,
     };
+  }
+
+  /** 제안 항목 조회 (리포트 생성 전, 유저가 OX 체크할 목록) */
+  async getProposalItems(userId: string) {
+    return this.monthlyCollector.getProposalItems(userId);
   }
 
   // ========== 외부 URL 스크랩 ==========
