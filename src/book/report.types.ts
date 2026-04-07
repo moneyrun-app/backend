@@ -267,7 +267,6 @@ export interface SectionI {
 export type ReportSection = SectionA | SectionB | SectionC | SectionD | SectionE | SectionF | SectionG | SectionH | SectionI;
 
 export interface DetailedReportV6 {
-  title: string;
   summary: string;
   sections: ReportSection[];
   disclaimer: string;

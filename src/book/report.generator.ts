@@ -83,7 +83,6 @@ export class ReportGenerator {
     const f = (n: number) => (Math.floor(n / 1000) * 1000).toLocaleString();
 
     return {
-      title: '시뮬레이터 분석 리포트',
       summary: `잉여자금 월 ${f(surplus)}원, 하루 ${f(daily)}원 사용 가능. 등급 ${user.grade}.`,
       sections,
       disclaimer: DISCLAIMER,

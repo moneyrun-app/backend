@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { PacemakerService } from './pacemaker.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -61,5 +61,30 @@ export class PacemakerController {
       parseInt(page),
       parseInt(limit),
     );
+  }
+
+  // ========== 월간 소비 확정 ==========
+
+  @Get('monthly-finalize-status')
+  async getMonthlyFinalizeStatus(@CurrentUser('id') userId: string) {
+    return this.pacemakerService.getMonthlyFinalizeStatus(userId);
+  }
+
+  @Post('monthly-finalize')
+  @HttpCode(HttpStatus.OK)
+  async finalizeMonth(
+    @CurrentUser('id') userId: string,
+    @Body('month') month: string,
+  ) {
+    return this.pacemakerService.finalizeMonth(userId, month);
+  }
+
+  @Post('monthly-finalize/cancel')
+  @HttpCode(HttpStatus.OK)
+  async cancelFinalize(
+    @CurrentUser('id') userId: string,
+    @Body('month') month: string,
+  ) {
+    return this.pacemakerService.cancelFinalize(userId, month);
   }
 }

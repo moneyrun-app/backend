@@ -109,6 +109,13 @@ export class PacemakerService {
       throw new HttpException('미래 날짜는 체크할 수 없습니다.', HttpStatus.BAD_REQUEST);
     }
 
+    // 확정된 월의 daily check 수정 차단
+    const dateMonth = dto.date.substring(0, 7);
+    const finalized = await this.isMonthFinalized(userId, dateMonth);
+    if (finalized) {
+      throw new HttpException('이미 확정된 월의 지출은 수정할 수 없습니다. 확정을 취소한 후 수정해주세요.', HttpStatus.BAD_REQUEST);
+    }
+
     const { data: existing } = await this.supabase.db
       .from('daily_checks')
       .select('id')
@@ -427,6 +434,238 @@ export class PacemakerService {
       disclaimer: row.disclaimer || '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
       createdAt: row.created_at,
     };
+  }
+
+  // ========== 월간 소비 확정 ==========
+
+  /** 1. 확정 상태 조회 */
+  async getMonthlyFinalizeStatus(userId: string) {
+    const today = this.getTodayKST();
+    const [y, m, d] = today.split('-').map(Number);
+    const currentMonth = `${y}-${String(m).padStart(2, '0')}`;
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const isLastDay = d === daysInMonth;
+
+    // 현재 월 확정 여부
+    const { data: currentFin } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('month', currentMonth)
+      .eq('expired', false)
+      .single();
+
+    // 현재 월 리포트 여부 (monthly_reports.month는 DATE 타입 → "-01" 붙여서 조회)
+    const { data: currentReport } = await this.supabase.db
+      .from('monthly_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('month', `${currentMonth}-01`)
+      .single();
+
+    // pendingReport: 확정O + 리포트X + 소멸X인 월 (최대 1개, 최신)
+    const { data: allFinalizations } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('month')
+      .eq('user_id', userId)
+      .eq('expired', false)
+      .order('month', { ascending: false });
+
+    let pendingReport: { month: string; reportId: null } | null = null;
+
+    if (allFinalizations) {
+      for (const fin of allFinalizations) {
+        if (fin.month === currentMonth) continue;
+        const { data: report } = await this.supabase.db
+          .from('monthly_reports')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('month', `${fin.month}-01`)
+          .single();
+
+        if (!report) {
+          pendingReport = { month: fin.month, reportId: null };
+          break;  // 최신 1개만
+        }
+      }
+    }
+
+    // 과거 미확정 월 목록 (유저 첫 daily_check 이후 ~ 전월)
+    const unfinalizedMonths = await this.getUnfinalizedMonths(userId, currentMonth);
+
+    return {
+      currentMonth: {
+        month: currentMonth,
+        finalized: !!currentFin,
+        isLastDay,
+        reportId: currentReport?.id || null,
+      },
+      pendingReport,
+      unfinalizedMonths,
+    };
+  }
+
+  /** 2. 월간 소비 확정 */
+  async finalizeMonth(userId: string, month: string) {
+    // 이미 확정된 월인지 확인
+    const { data: existing } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('id, expired')
+      .eq('user_id', userId)
+      .eq('month', month)
+      .single();
+
+    if (existing && !existing.expired) {
+      throw new HttpException('이미 확정된 월입니다.', HttpStatus.BAD_REQUEST);
+    }
+
+    const today = this.getTodayKST();
+    const currentMonth = today.substring(0, 7);
+
+    // 이전 미확정 월 자동 확정
+    const unfinalizedMonths = await this.getUnfinalizedMonths(userId, month);
+    const autoFinalized: string[] = [];
+
+    for (const um of unfinalizedMonths) {
+      await this.supabase.db
+        .from('monthly_finalizations')
+        .upsert({
+          user_id: userId,
+          month: um,
+          expired: false,
+        }, { onConflict: 'user_id,month' });
+      autoFinalized.push(um);
+    }
+
+    // 이전 pendingReport 소멸 처리
+    let expiredReport: string | null = null;
+    const { data: allFins } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('month')
+      .eq('user_id', userId)
+      .eq('expired', false)
+      .neq('month', month)
+      .order('month', { ascending: false });
+
+    if (allFins) {
+      for (const fin of allFins) {
+        const { data: report } = await this.supabase.db
+          .from('monthly_reports')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('month', `${fin.month}-01`)
+          .single();
+
+        if (!report) {
+          // 리포트 미생성 → 소멸
+          await this.supabase.db
+            .from('monthly_finalizations')
+            .update({ expired: true })
+            .eq('user_id', userId)
+            .eq('month', fin.month);
+          expiredReport = fin.month;
+          break;
+        }
+      }
+    }
+
+    // 해당 월 확정
+    if (existing) {
+      await this.supabase.db
+        .from('monthly_finalizations')
+        .update({ expired: false, finalized_at: new Date().toISOString() })
+        .eq('id', existing.id);
+    } else {
+      await this.supabase.db
+        .from('monthly_finalizations')
+        .insert({ user_id: userId, month });
+    }
+
+    return {
+      finalized: month,
+      autoFinalized,
+      expiredReport,
+    };
+  }
+
+  /** 3. 확정 취소 */
+  async cancelFinalize(userId: string, month: string) {
+    // 리포트 생성 여부 확인 (monthly_reports.month는 DATE 타입)
+    const { data: report } = await this.supabase.db
+      .from('monthly_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('month', `${month}-01`)
+      .single();
+
+    if (report) {
+      throw new HttpException(
+        '리포트가 이미 생성된 월은 확정을 취소할 수 없습니다.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const { error } = await this.supabase.db
+      .from('monthly_finalizations')
+      .delete()
+      .eq('user_id', userId)
+      .eq('month', month);
+
+    if (error) {
+      throw new Error(`확정 취소 실패: ${error.message}`);
+    }
+
+    return { success: true };
+  }
+
+  /** 확정 여부 확인 (daily-check 차단용) */
+  async isMonthFinalized(userId: string, month: string): Promise<boolean> {
+    const { data } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('month', month)
+      .eq('expired', false)
+      .single();
+
+    return !!data;
+  }
+
+  /** 과거 미확정 월 목록 (유저 가입월 ~ targetMonth 직전) */
+  private async getUnfinalizedMonths(userId: string, targetMonth: string): Promise<string[]> {
+    // 유저 가입일 기준
+    const { data: user } = await this.supabase.db
+      .from('users')
+      .select('created_at')
+      .eq('id', userId)
+      .single();
+
+    if (!user) return [];
+
+    const createdAt = new Date(user.created_at);
+    const startMonth = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, '0')}`;
+    if (startMonth >= targetMonth) return [];
+
+    // startMonth ~ targetMonth 직전까지의 모든 월
+    const allMonths: string[] = [];
+    let [sy, sm] = startMonth.split('-').map(Number);
+    const [ty, tm] = targetMonth.split('-').map(Number);
+
+    while (sy < ty || (sy === ty && sm < tm)) {
+      allMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
+      sm++;
+      if (sm > 12) { sm = 1; sy++; }
+    }
+
+    // 이미 확정된 월 제외
+    const { data: finalized } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('month')
+      .eq('user_id', userId)
+      .in('month', allMonths);
+
+    const finalizedSet = new Set((finalized || []).map((f: any) => f.month));
+    return allMonths.filter(m => !finalizedSet.has(m));
   }
 
   // ========== 유틸 ==========

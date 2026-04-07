@@ -37,7 +37,6 @@ export class BookService {
     return {
       items: (items || []).map((r: any) => ({
         id: r.id,
-        title: '시뮬레이터 분석 리포트',
         summary: r.summary,
         reportVersion: r.report_version || 'v1',
         analyzedAt: r.created_at,
@@ -60,7 +59,6 @@ export class BookService {
 
     return {
       id: data.id,
-      title: '시뮬레이터 분석 리포트',
       reportVersion: 'v6',
       analyzedAt: data.created_at,
       grade: data.grade,
@@ -107,7 +105,6 @@ export class BookService {
       .from('detailed_reports')
       .insert({
         user_id: userId,
-        title: report.title,
         summary: report.summary,
         grade: profile.grade,
         sections: report.sections,
@@ -176,23 +173,79 @@ export class BookService {
   // ========== 월간 리포트 v2 ==========
 
   async getMonthlyReports(userId: string) {
-    const { data } = await this.supabase.db
+    // 생성된 리포트
+    const { data: reports } = await this.supabase.db
       .from('monthly_reports')
       .select('id, month, summary, badges_earned, created_at')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    return (data || []).map((r: any) => ({
+    const createdItems = (reports || []).map((r: any) => ({
       id: r.id,
-      month: r.month,
+      month: this.fromMonthDate(r.month),
       summary: r.summary,
+      status: 'created' as const,
       badgesEarned: r.badges_earned || [],
       createdAt: r.created_at,
     }));
+
+    const createdMonths = new Set(createdItems.map(r => r.month));  // "YYYY-MM" 형식
+
+    // 확정됨 + 리포트 미생성 + 소멸 안 됨 → pending
+    const { data: finalizations } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('month, finalized_at')
+      .eq('user_id', userId)
+      .eq('expired', false);
+
+    const pendingItems = (finalizations || [])
+      .filter((f: any) => !createdMonths.has(f.month))
+      .map((f: any) => ({
+        id: null,
+        month: f.month,
+        summary: null,
+        status: 'pending' as const,
+        badgesEarned: [],
+        createdAt: f.finalized_at,
+      }));
+
+    // 합치고 월 역순 정렬
+    return [...createdItems, ...pendingItems]
+      .sort((a, b) => b.month.localeCompare(a.month));
   }
 
   async createMonthlyReport(userId: string, dto: CreateMonthlyReportDto) {
-    const month = this.getCurrentMonth();
+    const month = dto.month || this.getCurrentMonth();
+
+    // 확정된 월에만 리포트 생성 가능
+    const { data: finalization } = await this.supabase.db
+      .from('monthly_finalizations')
+      .select('id, expired')
+      .eq('user_id', userId)
+      .eq('month', month)
+      .single();
+
+    if (!finalization || finalization.expired) {
+      throw new HttpException(
+        '소비가 확정되지 않은 월입니다. 먼저 확정해주세요.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // 이미 생성된 리포트 확인
+    const { data: existingReport } = await this.supabase.db
+      .from('monthly_reports')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('month', this.toMonthDate(month))
+      .single();
+
+    if (existingReport) {
+      throw new HttpException(
+        '이미 해당 월 리포트가 생성되었습니다.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     // 1. 데이터 수집 (소비, 제안 이행, 퀴즈, 배지)
     const reportData = await this.monthlyCollector.collect(
@@ -246,7 +299,7 @@ export class BookService {
       .from('monthly_reports')
       .insert({
         user_id: userId,
-        month,
+        month: this.toMonthDate(month),
         summary,
         guide: narratives.spending,  // 하위 호환용
         user_input: {
@@ -273,7 +326,7 @@ export class BookService {
 
     return {
       id: saved!.id,
-      month: saved!.month,
+      month: this.fromMonthDate(saved!.month),
       summary: saved!.summary,
       badgesEarned: saved!.badges_earned,
       createdAt: saved!.created_at,
@@ -294,7 +347,7 @@ export class BookService {
 
     return {
       id: data.id,
-      month: data.month,
+      month: this.fromMonthDate(data.month),
       summary: data.summary,
       sections: data.sections || {},
       badgesEarned: data.badges_earned || [],
@@ -526,5 +579,15 @@ export class BookService {
     const year = kst.getUTCFullYear();
     const month = String(kst.getUTCMonth() + 1).padStart(2, '0');
     return `${year}-${month}`;
+  }
+
+  /** DB의 month 컬럼이 DATE 타입이므로 "2026-01" → "2026-01-01" 변환 */
+  private toMonthDate(month: string): string {
+    return month.length === 7 ? `${month}-01` : month;
+  }
+
+  /** DB에서 읽은 DATE를 "YYYY-MM" 형식으로 변환 */
+  private fromMonthDate(dateStr: string): string {
+    return dateStr.substring(0, 7);
   }
 }
