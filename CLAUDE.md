@@ -14,10 +14,9 @@
 
 | 문서 | 설명 |
 |---|---|
-| `docs/01_기획서_v3.0.md` | 기획 원본 |
-| `docs/02_API_v3.0.md` | 유일한 API 문서 |
-| `docs/07_DECISIONS.md` | 기술 결정 이력 |
-| `docs/08_FLOW.md` | 전체 플로우 |
+| `docs/API.md` | API 명세서 (33개 엔드포인트) |
+| `docs/FLOWS.md` | API별 코드 레벨 동작 플로우 |
+| `docs/DATABASE.md` | DB 테이블 구조 + 데이터 흐름도 |
 
 ---
 

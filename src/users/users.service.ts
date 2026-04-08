@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
-import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -26,34 +25,5 @@ export class UsersService {
       role: data.role,
       createdAt: data.created_at,
     };
-  }
-
-  async update(userId: string, dto: UpdateUserDto) {
-    const updateData: Record<string, any> = { updated_at: new Date().toISOString() };
-    if (dto.nickname !== undefined) updateData.nickname = dto.nickname;
-    if (dto.email !== undefined) updateData.email = dto.email;
-    if (dto.marketingConsent !== undefined) updateData.marketing_consent = dto.marketingConsent;
-
-    const { error } = await this.supabase.db
-      .from('users')
-      .update(updateData)
-      .eq('id', userId);
-
-    if (error) {
-      throw new Error(`유저 업데이트 실패: ${error.message}`);
-    }
-
-    return this.findById(userId);
-  }
-
-  async delete(userId: string) {
-    const { error } = await this.supabase.db
-      .from('users')
-      .delete()
-      .eq('id', userId);
-
-    if (error) {
-      throw new Error(`유저 삭제 실패: ${error.message}`);
-    }
   }
 }

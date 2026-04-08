@@ -137,39 +137,6 @@ export class BookService {
     return saved!.id;
   }
 
-  /**
-   * 유료 리포트 재생성 (또는 첫 무료 생성)
-   */
-  async generateReportWithPayment(userId: string, paymentToken?: string) {
-    // 최초 무료 여부 확인
-    const { data: freeReport } = await this.supabase.db
-      .from('detailed_reports')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('is_free', true)
-      .limit(1)
-      .single();
-
-    const isFree = !freeReport;
-
-    if (!isFree && !paymentToken) {
-      throw new HttpException(
-        '유료 리포트 생성은 결제가 필요합니다.',
-        HttpStatus.PAYMENT_REQUIRED,
-      );
-    }
-
-    // TODO: 유료인 경우 PG 결제 검증 (paymentToken)
-    // 결제 이력 저장은 payment 모듈에서 처리
-
-    const reportId = await this.generateDetailedReport(userId, isFree);
-
-    return {
-      id: reportId,
-      status: 'generating',
-    };
-  }
-
   // ========== 월간 리포트 v2 ==========
 
   async getMonthlyReports(userId: string) {
@@ -546,29 +513,6 @@ export class BookService {
         .insert({ user_id: userId, content_id: contentId });
       return { isScrapped: true };
     }
-  }
-
-  // ========== 금융 용어 사전 ==========
-
-  async getGlossary(userId: string) {
-    const { data } = await this.supabase.db
-      .from('user_glossaries')
-      .select('id, terms, grade, created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!data) {
-      return { terms: [], grade: null, message: '아직 리포트를 생성하지 않았어요. 리포트를 생성하면 용어사전이 선물로 저장됩니다!' };
-    }
-
-    return {
-      terms: data.terms,
-      grade: data.grade,
-      message: '여기까지 읽어주셔서 감사해요. 금융용어사전을 선물로 마이북에 넣어드렸어요!',
-      createdAt: data.created_at,
-    };
   }
 
   // ========== Utils ==========

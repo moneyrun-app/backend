@@ -75,32 +75,6 @@ export class PacemakerService {
     return { message: '피드백이 접수되었습니다.' };
   }
 
-  async getHistory(userId: string, page: number, limit: number) {
-    const offset = (page - 1) * limit;
-
-    const [messagesRes, countRes] = await Promise.all([
-      this.supabase.db
-        .from('pacemaker_messages')
-        .select('id, date, message, grade, theme, quote')
-        .eq('user_id', userId)
-        .order('date', { ascending: false })
-        .range(offset, offset + limit - 1),
-      this.supabase.db
-        .from('pacemaker_messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId),
-    ]);
-
-    return {
-      items: messagesRes.data || [],
-      pagination: {
-        page,
-        limit,
-        total: countRes.count || 0,
-      },
-    };
-  }
-
   // ========== 일별 지출 체크 ==========
 
   async createDailyCheck(userId: string, dto: CreateDailyCheckDto) {

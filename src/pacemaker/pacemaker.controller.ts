@@ -50,19 +50,6 @@ export class PacemakerController {
     return this.pacemakerService.getWeeklySummary(userId, date);
   }
 
-  @Get('history')
-  async getHistory(
-    @CurrentUser('id') userId: string,
-    @Query('page') page: string = '1',
-    @Query('limit') limit: string = '20',
-  ) {
-    return this.pacemakerService.getHistory(
-      userId,
-      parseInt(page),
-      parseInt(limit),
-    );
-  }
-
   // ========== 월간 소비 확정 ==========
 
   @Get('monthly-finalize-status')

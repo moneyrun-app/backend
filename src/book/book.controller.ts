@@ -15,7 +15,6 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateMonthlyReportDto } from './dto/create-monthly-report.dto';
 import { CreateScrapDto } from './dto/create-scrap.dto';
-import { GenerateReportDto } from './dto/generate-report.dto';
 
 @Controller('book')
 @UseGuards(JwtAuthGuard)
@@ -36,16 +35,6 @@ export class BookController {
   ) {
     return this.bookService.getDetailedReportById(userId, id);
   }
-
-  @Post('detailed-reports/generate')
-  @HttpCode(HttpStatus.CREATED)
-  async generateReport(
-    @CurrentUser('id') userId: string,
-    @Body() dto: GenerateReportDto,
-  ) {
-    return this.bookService.generateReportWithPayment(userId, dto.paymentToken);
-  }
-
 
   // ========== 월간 리포트 v2 ==========
 
@@ -102,11 +91,31 @@ export class BookController {
     return { message: '삭제되었습니다.' };
   }
 
-  // ========== 금융 용어 사전 (선물) ==========
+  // ========== 학습 콘텐츠 ==========
 
-  @Get('glossary')
-  async getGlossary(@CurrentUser('id') userId: string) {
-    return this.bookService.getGlossary(userId);
+  @Get('learn')
+  async getLearnContents(
+    @CurrentUser('id') userId: string,
+    @Query('grade') grade?: string,
+  ) {
+    return this.bookService.getLearnContents(userId, grade);
+  }
+
+  @Get('learn/:id')
+  async getLearnContent(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.bookService.getLearnContentById(userId, id);
+  }
+
+  @Post('learn/:id/scrap')
+  @HttpCode(HttpStatus.OK)
+  async toggleLearnScrap(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.bookService.toggleLearnScrap(userId, id);
   }
 
 }

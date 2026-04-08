@@ -31,11 +31,6 @@ export class AdminController {
     return this.adminService.getQuizzes();
   }
 
-  @Get('configs')
-  async getConfigs(@Query('category') category?: string) {
-    return this.adminService.getConfigs(category);
-  }
-
   @Patch('constants/:key')
   async updateConstant(
     @Param('key') key: string,

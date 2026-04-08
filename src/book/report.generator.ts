@@ -4,16 +4,6 @@ import { ReportCalculator } from './report-calculator';
 import { DetailedReportV6, ReportSection, PeerData, UserSnapshot } from './report.types';
 import { buildSystemPrompt, buildUserPrompt, filterProhibited, DISCLAIMER } from './report-prompts';
 
-interface MonthlyReportResult {
-  summary: string;
-  guide: string;
-  weeklyStats?: {
-    budgetComplianceRate?: number;
-    biggestCategory?: string;
-    savedCategory?: string;
-  };
-}
-
 @Injectable()
 export class ReportGenerator {
   private client: Anthropic;
@@ -133,68 +123,4 @@ export class ReportGenerator {
     ];
   }
 
-  // ========== 월간 리포트 (기존 유지) ==========
-
-  async generateWeeklyReport(
-    profile: any,
-    configMap: Record<string, string>,
-    weekStatus: { overallFeeling: string; memo?: string },
-    messages: any[],
-  ): Promise<MonthlyReportResult> {
-    const feelingMap: Record<string, string> = {
-      good: '잘 보냈다',
-      okay: '무난했다',
-      tight: '빠듯했다',
-      bad: '힘들었다',
-    };
-
-    const messagesContext = messages.length > 0
-      ? messages.map((m: any) => `- ${m.date}: ${m.message}`).join('\n')
-      : '이번 달 메시지 없음';
-
-    const prompt = `너는 머니런 페이스메이커야. 유저의 이번 달 상태를 보고 월간 가이드를 만들어줘.
-
-## 유저 이번 달 상태
-- 체감: "${feelingMap[weekStatus.overallFeeling] || weekStatus.overallFeeling}"
-- 메모: "${weekStatus.memo || '없음'}"
-
-## 유저 재무 데이터
-- 월 실수령액: ${(Math.floor(profile.monthlyIncome / 1000) * 1000).toLocaleString()}원
-- 하루 사용 가능: ${(Math.floor((profile.variableCost?.daily || 0) / 1000) * 1000).toLocaleString()}원
-- 등급: ${profile.grade}
-
-## 이번 달 페이스메이커 메시지
-${messagesContext}
-
-## 규칙
-1. 찐친 톤. 반말 사용.
-2. 수치는 주어진 데이터만 사용. 금액은 천원 단위까지만.
-3. "이번 달 이렇게 해봐"라는 구체적 가이드.
-4. 확정적인 투자 권유 금지.
-5. JSON으로만 응답.
-
-## 응답 형식 (JSON만)
-{
-  "summary": "이번 달 요약 (1문장)",
-  "guide": "마크다운 가이드 본문 (300자 이상, 구체적 행동 제안 포함)"
-}`;
-
-    try {
-      const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      const text = response.content[0].type === 'text' ? response.content[0].text : '';
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('JSON not found');
-      return JSON.parse(jsonMatch[0]);
-    } catch {
-      return {
-        summary: `이번 달은 ${feelingMap[weekStatus.overallFeeling] || '무난했'}어. 다음 달은 더 잘해보자.`,
-        guide: `## 이번 달 돌아보기\n\n체감: ${feelingMap[weekStatus.overallFeeling] || weekStatus.overallFeeling}\n\n하루에 ${(Math.floor((profile.variableCost?.daily || 0) / 1000) * 1000).toLocaleString()}원 쓸 수 있는데, 다음 달은 좀 더 의식적으로 관리해보자.\n\n### 다음 달 할 일\n\n1. 배달 횟수 줄이기\n2. 점심 도시락 2번 이상\n3. 충동구매 전 24시간 대기`,
-      };
-    }
-  }
 }
