@@ -304,7 +304,7 @@ export class MyBookService {
     if (!type || type === 'url') {
       const { data: urlScraps } = await this.supabase.db
         .from('external_scraps')
-        .select('id, url, channel, creator, title, ai_summary, scrap_count, created_at')
+        .select('id, url, channel, creator, title, body_text, og_image_url, ai_summary, scrap_count, created_at')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
@@ -315,6 +315,8 @@ export class MyBookService {
         channel: s.channel,
         creator: s.creator,
         title: s.title,
+        bodyText: s.body_text,
+        ogImageUrl: s.og_image_url,
         aiSummary: s.ai_summary,
         scrapCount: s.scrap_count,
         createdAt: s.created_at,

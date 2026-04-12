@@ -223,6 +223,8 @@ export class BookService {
         creator: metadata.creator,
         content_date: metadata.contentDate,
         title: metadata.title,
+        body_text: metadata.bodyText ? metadata.bodyText.substring(0, 5000) : null,
+        og_image_url: metadata.ogImageUrl,
         ai_summary: metadata.aiSummary,
         scrap_count: scrapCount,
       })
@@ -240,6 +242,8 @@ export class BookService {
       creator: saved!.creator,
       contentDate: saved!.content_date,
       title: saved!.title,
+      bodyText: saved!.body_text,
+      ogImageUrl: saved!.og_image_url,
       aiSummary: saved!.ai_summary,
       scrapCount,
       createdAt: saved!.created_at,

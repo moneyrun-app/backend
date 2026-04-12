@@ -7,6 +7,8 @@ export interface ScrapMetadata {
   creator: string | null;
   contentDate: string | null;
   title: string | null;
+  bodyText: string | null;
+  ogImageUrl: string | null;
   aiSummary: string | null;
 }
 
@@ -28,6 +30,7 @@ export class ScraperService {
     let contentDate: string | null = null;
     let aiSummary: string | null = null;
     let bodyText: string | null = null;
+    let ogImageUrl: string | null = null;
 
     try {
       const response = await fetch(url, {
@@ -39,6 +42,7 @@ export class ScraperService {
         title = this.extractTitle(html);
         creator = this.extractCreator(html, channel);
         bodyText = this.extractBodyText(html);
+        ogImageUrl = this.extractOgImage(html);
       }
     } catch {
       // 메타데이터 추출 실패해도 계속 진행
@@ -51,7 +55,7 @@ export class ScraperService {
       aiSummary = await this.summarizeWebPage(url, title, bodyText);
     }
 
-    return { channel, creator, contentDate, title, aiSummary };
+    return { channel, creator, contentDate, title, bodyText, ogImageUrl, aiSummary };
   }
 
   /** 유튜브: 자막 추출 → Claude 요약 */
@@ -139,6 +143,12 @@ export class ScraperService {
     const titleTag = html.match(/<title[^>]*>([^<]*)<\/title>/i);
     if (titleTag) return titleTag[1].trim();
 
+    return null;
+  }
+
+  private extractOgImage(html: string): string | null {
+    const ogImage = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"[^>]*>/i);
+    if (ogImage) return ogImage[1];
     return null;
   }
 
