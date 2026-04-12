@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
+import { fetchYoutubeTranscript } from './youtube-transcript';
 
 export interface ScrapMetadata {
   channel: 'youtube' | 'threads' | 'instagram' | 'other';
@@ -22,7 +23,6 @@ export class ScraperService {
   async scrapeUrl(url: string): Promise<ScrapMetadata> {
     const channel = this.detectChannel(url);
 
-    // 메타데이터 추출 시도
     let title: string | null = null;
     let creator: string | null = null;
     let contentDate: string | null = null;
@@ -42,12 +42,81 @@ export class ScraperService {
       // 메타데이터 추출 실패해도 계속 진행
     }
 
-    // AI 요약 (youtube, other만)
-    if (channel === 'youtube' || channel === 'other') {
-      aiSummary = await this.generateSummary(url, title, channel);
+    // AI 요약
+    if (channel === 'youtube') {
+      aiSummary = await this.summarizeYoutube(url, title);
+    } else if (channel === 'other') {
+      aiSummary = await this.summarizeWebPage(url, title);
     }
 
     return { channel, creator, contentDate, title, aiSummary };
+  }
+
+  /** 유튜브: 자막 추출 → Claude 요약 */
+  private async summarizeYoutube(url: string, title: string | null): Promise<string | null> {
+    let transcript = '';
+
+    try {
+      const items = await fetchYoutubeTranscript(url, 'ko');
+      transcript = items.map((item) => item.text).join(' ');
+    } catch {
+      // 한국어 자막 없으면 기본 언어로 시도
+      try {
+        const items = await fetchYoutubeTranscript(url);
+        transcript = items.map((item) => item.text).join(' ');
+      } catch {
+        // 자막 없는 영상 → 제목 기반 요약
+        if (!title) return null;
+        return this.generateSummary(
+          `유튜브 영상 제목: "${title}"\n(자막을 가져올 수 없는 영상입니다. 제목을 바탕으로 간단히 요약해주세요.)`,
+          '(자막 없음) ',
+        );
+      }
+    }
+
+    if (!transcript) return null;
+
+    // 자막이 너무 길면 앞 3000자만
+    const trimmed = transcript.length > 3000 ? transcript.substring(0, 3000) + '...' : transcript;
+
+    return this.generateSummary(
+      `유튜브 영상 자막 내용:\n${trimmed}${title ? `\n\n영상 제목: ${title}` : ''}`,
+      '',
+    );
+  }
+
+  /** 일반 웹페이지: URL + 제목 기반 요약 */
+  private async summarizeWebPage(url: string, title: string | null): Promise<string | null> {
+    return this.generateSummary(
+      `다음 웹페이지의 핵심 내용을 요약해줘.\nURL: ${url}${title ? `\n제목: ${title}` : ''}`,
+      '',
+    );
+  }
+
+  private async generateSummary(content: string, prefix: string): Promise<string | null> {
+    try {
+      const response = await this.client.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
+        messages: [
+          {
+            role: 'user',
+            content: `${content}
+
+규칙:
+1. 금융/경제 관점에서 핵심만 요약
+2. 한국어로 자연스럽게
+3. 300자 이내
+4. 요약만 출력 (다른 텍스트 없이)`,
+          },
+        ],
+      });
+
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+      return text.trim() ? prefix + text.trim() : null;
+    } catch {
+      return null;
+    }
   }
 
   private detectChannel(url: string): ScrapMetadata['channel'] {
@@ -78,37 +147,5 @@ export class ScraperService {
     if (author) return author[1];
 
     return null;
-  }
-
-  private async generateSummary(
-    url: string,
-    title: string | null,
-    channel: string,
-  ): Promise<string | null> {
-    try {
-      const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-6-20260403',
-        max_tokens: 300,
-        messages: [
-          {
-            role: 'user',
-            content: `다음 ${channel === 'youtube' ? '유튜브 영상' : '웹페이지'}의 핵심 내용을 300자 이내로 요약해줘.
-URL: ${url}
-${title ? `제목: ${title}` : ''}
-
-규칙:
-1. 금융/경제 관점에서 핵심만 요약
-2. 한국어로 자연스럽게
-3. 300자 이내
-4. 요약만 출력 (다른 텍스트 없이)`,
-          },
-        ],
-      });
-
-      const text = response.content[0].type === 'text' ? response.content[0].text : '';
-      return text.trim() || null;
-    } catch {
-      return null;
-    }
   }
 }

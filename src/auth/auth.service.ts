@@ -4,7 +4,6 @@ import { SupabaseService } from '../common/supabase/supabase.service';
 import { OnboardingDto } from './dto/onboarding.dto';
 import { calculateVariableCost } from '../finance/variable-cost.calculator';
 import { calculateGrade } from '../finance/grade.calculator';
-import { BookService } from '../book/book.service';
 
 interface KakaoUserInfo {
   id: number;
@@ -21,7 +20,6 @@ export class AuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
-    private readonly bookService: BookService,
   ) {}
 
   async kakaoLogin(accessToken: string) {
@@ -72,12 +70,13 @@ export class AuthService {
 
     // 계산
     const pensionStartAge = dto.pensionStartAge ?? 65;
+    const monthlyInvestment = dto.monthlyInvestment ?? 0;
     const monthlyExpense = dto.monthlyFixedCost + dto.monthlyVariableCost;
-    const surplus = dto.monthlyIncome - monthlyExpense;
+    const surplus = dto.monthlyIncome - monthlyExpense - monthlyInvestment;
     const investmentPeriod = dto.retirementAge - dto.age;
     const vestingPeriod = pensionStartAge - dto.retirementAge;
     const grade = calculateGrade(dto.monthlyIncome, monthlyExpense);
-    const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost);
+    const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost, monthlyInvestment);
 
     // finance_profiles 저장
     const { error: profileError } = await this.supabase.db
@@ -90,6 +89,7 @@ export class AuthService {
         monthly_income: dto.monthlyIncome,
         monthly_fixed_cost: dto.monthlyFixedCost,
         monthly_variable_cost: dto.monthlyVariableCost,
+        monthly_investment: monthlyInvestment,
         variable_cost_monthly: variableCost.monthly,
         variable_cost_weekly: variableCost.weekly,
         variable_cost_daily: variableCost.daily,
@@ -110,17 +110,6 @@ export class AuthService {
       })
       .eq('id', userId);
 
-    // 최초 무료 AI 상세 리포트 생성
-    let firstReportId: string | null = null;
-    try {
-      console.log('[리포트] 생성 시작 - userId:', userId);
-      firstReportId = await this.bookService.generateDetailedReport(userId, true);
-      console.log('[리포트] 생성 완료 - reportId:', firstReportId);
-    } catch (err) {
-      console.error('[리포트] 생성 실패:', err);
-      // 리포트 생성 실패해도 온보딩은 완료
-    }
-
     return {
       grade,
       monthlyExpense,
@@ -128,7 +117,11 @@ export class AuthService {
       investmentPeriod,
       vestingPeriod,
       variableCost,
-      firstReportId,
+      availableBudget: {
+        monthly: variableCost.monthly,
+        weekly: variableCost.weekly,
+        daily: variableCost.daily,
+      },
     };
   }
 

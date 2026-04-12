@@ -28,6 +28,11 @@ export class UpdateProfileDto {
   @IsInt()
   @Min(0)
   @IsOptional()
+  monthlyInvestment?: number;
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
   monthlyFixedCost?: number;
 
   @IsInt()

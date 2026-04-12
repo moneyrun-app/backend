@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Body, UseGuards, NotFoundException } from '@nestjs/common';
 import { FinanceService } from './finance.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -11,7 +11,14 @@ export class FinanceController {
 
   @Get('profile')
   async getProfile(@CurrentUser('id') userId: string) {
-    return this.financeService.getFullProfile(userId);
+    try {
+      return await this.financeService.getFullProfile(userId);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        return { needsOnboarding: true };
+      }
+      throw e;
+    }
   }
 
   @Patch('profile')

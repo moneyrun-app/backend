@@ -12,6 +12,8 @@ import { ConstantsModule } from './constants/constants.module';
 import { QuizModule } from './quiz/quiz.module';
 import { AdminModule } from './admin/admin.module';
 import { StatisticsModule } from './statistics/statistics.module';
+import { MoneyBookModule } from './money-book/money-book.module';
+import { MyBookModule } from './my-book/my-book.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { StatisticsModule } from './statistics/statistics.module';
     QuizModule,
     AdminModule,
     StatisticsModule,
+    MoneyBookModule,
+    MyBookModule,
   ],
 })
 export class AppModule {}

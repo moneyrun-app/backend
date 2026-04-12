@@ -6,7 +6,7 @@
 
 ## 프로젝트 개요
 
-**머니런(MoneyRun)** — 비로그인 시뮬레이션 → 로그인 후 AI 리포트(마이북) + AI 코칭(페이스메이커)으로 재방문 유도하는 웹 MVP.
+**머니런(MoneyRun)** — 비로그인 시뮬레이션 → 로그인 후 AI 개인화 금융 콘텐츠(머니북) + 매일 퀴즈/코칭(페이스메이커)으로 재방문 유도하는 웹 MVP.
 
 ---
 
@@ -14,9 +14,9 @@
 
 | 문서 | 설명 |
 |---|---|
-| `docs/API.md` | API 명세서 (33개 엔드포인트) |
-| `docs/FLOWS.md` | API별 코드 레벨 동작 플로우 |
-| `docs/DATABASE.md` | DB 테이블 구조 + 데이터 흐름도 |
+| `docs/기획서_v2.0_2026-04-11.md` | v2.0 전체 기획서 |
+| `docs/프론트엔드_전달사항_2026-04-11.md` | 프론트엔드 API 명세 + 페이지 가이드 |
+| `migrations/v2.0_2026-04-11.sql` | DB 마이그레이션 SQL |
 
 ---
 
@@ -27,8 +27,9 @@
 | 프레임워크 | NestJS (TypeScript) |
 | DB | Supabase (PostgreSQL) — **ORM 없음**, @supabase/supabase-js 직접 사용 |
 | 인증 | 카카오 OAuth2 + 자체 JWT |
-| AI | Anthropic Claude API |
-| 결제 | 미정 (토스페이먼츠 등) |
+| AI | Anthropic Claude API (claude-sonnet-4-20250514) |
+| 유튜브 자막 | youtube-transcript (MVP) → 추후 YouTube Data API v3 |
+| 결제 | 무료 (추후 카카오페이) |
 | 인프라 | Render |
 
 ---
@@ -47,71 +48,60 @@ src/
   │   ├── jwt.strategy.ts
   │   └── dto/
   │       ├── kakao-login.dto.ts
-  │       └── onboarding.dto.ts
+  │       └── onboarding.dto.ts  (8개 필드: +monthlyInvestment)
   │
   ├── users/                    ← /users/me
-  │   ├── users.module.ts
-  │   ├── users.controller.ts
-  │   ├── users.service.ts
-  │   └── dto/
-  │       └── update-user.dto.ts
   │
   ├── finance/                  ← /finance/profile
-  │   ├── finance.module.ts
-  │   ├── finance.controller.ts
-  │   ├── finance.service.ts
-  │   ├── variable-cost.calculator.ts  ← 변동비 계산
-  │   ├── grade.calculator.ts          ← 투자 체급 판정
+  │   ├── finance.service.ts    (availableBudget 추가)
+  │   ├── variable-cost.calculator.ts  (투자액 반영)
+  │   ├── grade.calculator.ts
   │   └── dto/
-  │       └── update-profile.dto.ts
+  │       └── update-profile.dto.ts  (+monthlyInvestment)
   │
   ├── simulation/               ← POST /simulation/calculate (비로그인)
-  │   ├── simulation.module.ts
-  │   ├── simulation.controller.ts
-  │   ├── simulation.service.ts
+  │
+  ├── pacemaker/                ← /pacemaker/today, /pacemaker/feedback
+  │   ├── pacemaker.controller.ts  (v2: 트랙타일 삭제됨)
+  │   ├── pacemaker.service.ts     (출석 정보 포함)
+  │   └── message.generator.ts     (투자액 데이터 반영)
+  │
+  ├── quiz/                     ← 퀴즈 + 출석 + 난이도 + 스크랩
+  │   ├── quiz.module.ts
+  │   ├── quiz.controller.ts    (v2: 출석/난이도/스크랩 엔드포인트)
+  │   ├── quiz.service.ts       (v2: getTodayQuiz, submitAnswerV2, 출석/뱃지)
   │   └── dto/
-  │       └── simulation.dto.ts
+  │       └── answer-quiz.dto.ts
   │
-  ├── pacemaker/                ← /pacemaker/*
-  │   ├── pacemaker.module.ts
-  │   ├── pacemaker.controller.ts
-  │   ├── pacemaker.service.ts
-  │   ├── message.generator.ts ← Claude API → 일일 메시지
+  ├── money-book/               ← 머니북 (서점) — 신규
+  │   ├── money-book.module.ts
+  │   ├── money-book.controller.ts     (GET 목록, GET 상세, POST 구매)
+  │   ├── money-book.service.ts        (AI 개인화 책 생성)
+  │   ├── admin-money-book.controller.ts (어드민 CRUD)
   │   └── dto/
-  │       └── feedback.dto.ts
   │
-  ├── book/                     ← /book/*
-  │   ├── book.module.ts
-  │   ├── book.controller.ts
-  │   ├── book.service.ts
-  │   ├── report.generator.ts  ← AI 상세/주간 리포트
-  │   ├── scraper.service.ts   ← 외부 URL 메타/AI 요약
+  ├── my-book/                  ← 마이북 (내 서재) — 신규
+  │   ├── my-book.module.ts
+  │   ├── my-book.controller.ts (overview, 책 열람, 하이라이트, 스크랩)
+  │   ├── my-book.service.ts    (머니레터, 스크랩 기반 책 생성)
   │   └── dto/
-  │       ├── create-weekly-report.dto.ts
-  │       ├── create-scrap.dto.ts
-  │       └── generate-report.dto.ts
   │
-  ├── payment/                  ← 결제 처리 (스텁)
-  │   ├── payment.module.ts
-  │   └── payment.service.ts
+  ├── book/                     ← 상세리포트 + 외부 URL 스크랩 (유지)
+  │   ├── book.service.ts       (월간리포트/학습콘텐츠 삭제됨)
+  │   ├── scraper.service.ts    (유튜브: youtube-transcript 자막 기반 요약)
+  │   └── report.generator.ts
   │
-  ├── constants/                ← GET /constants
-  │   ├── constants.module.ts
-  │   ├── constants.controller.ts
-  │   └── constants.service.ts
+  ├── admin/                    ← 어드민 API
+  ├── statistics/               ← 또래 비교
+  ├── constants/                ← 시스템 상수
+  ├── payment/                  ← 결제 (스텁)
   │
   └── common/
       ├── supabase/
-      │   ├── supabase.module.ts
-      │   └── supabase.service.ts
       ├── decorators/
-      │   └── current-user.decorator.ts
       ├── filters/
-      │   └── http-exception.filter.ts
-      ├── guards/
-      │   └── jwt-auth.guard.ts
+      ├── guards/              (jwt-auth.guard + admin.guard)
       └── interceptors/
-          └── response.interceptor.ts
 ```
 
 ---
@@ -121,94 +111,111 @@ src/
 ### 1. 변동비 계산 (variable-cost.calculator.ts)
 
 ```typescript
-function calculateVariableCost(monthlyIncome: number, monthlyFixedCost: number) {
-  const monthly = monthlyIncome - monthlyFixedCost;
-  return {
-    monthly,
-    weekly: Math.floor(monthly / 4.3),
-    daily: Math.floor(monthly / 30),
-  };
+function calculateVariableCost(monthlyIncome, monthlyFixedCost, monthlyInvestment = 0) {
+  const monthly = floor1000(monthlyIncome - monthlyFixedCost - monthlyInvestment);
+  const daily = floor1000(monthly / daysInMonth);
+  const weekly = floor1000(daily * 7);
 }
 ```
 
 ### 2. 투자 체급 (신호등)
 
 ```typescript
-function calculateGrade(monthlyIncome: number, monthlyVariableCost: number): Grade {
-  const ratio = monthlyVariableCost / monthlyIncome;
-  if (ratio > 0.70) return 'RED';      // 소비케어 집중
-  if (ratio > 0.40) return 'YELLOW';   // 투자준비
-  return 'GREEN';                       // 투자실습
-}
+// expenseRatio = (고정비 + 변동비) / 실수령액  (투자액은 포함 안 함)
+RED:    ≥ 70%  → 소비케어 집중
+YELLOW: ≥ 50%  → 투자준비
+GREEN:  < 50%  → 투자실습
 ```
 
-### 3. 페이스메이커 메시지 생성
+### 3. 페이스메이커 (v2)
 
 ```
 GET /pacemaker/today:
-  1. 오늘 날짜로 DB 조회 → 있으면 캐시 반환
-  2. 없으면 AI 생성:
-     - 참조: 투자 체급, AI 상세 리포트, 유저 스크랩, system_config, 날짜/요일, 전날 행동 완료 여부
-     - Claude API 프롬프트 (데이터 직접 삽입, AI는 메시지/행동만 작성)
-     - 금지 표현 필터링 + 면책 문구 자동 삽입
-  3. DB 저장 + 반환
-  하루 2회 제한 (기본 1회 + 새로고침 1회)
+  1. DB 캐시 확인 → 있으면 반환
+  2. 없으면 AI 메시지 생성 (투자액 반영)
+  3. todayQuiz: 1문제 (유저 레벨 기반, 이미 풀었으면 null)
+  4. attendance: { checkedToday, currentStreak, totalDays }
+  하루 2회 제한
 ```
 
-### 4. AI 상세 리포트
+### 4. 퀴즈/출석 시스템 (v2)
 
 ```
-최초 로그인 시: 자동 생성 (무료)
-투자 체급 수정 후 재생성: 유료 결제 확인 → 생성
-  → 투자 체급 세팅값 + 환경 세팅값(system_config) 기반
-  → Claude API로 상세 분석 생성
-  → DB 저장
+POST /quiz/:id/answer:
+  1. 정답/오답 판정 + 오답노트 저장
+  2. 출석체크 자동 (attendance_records)
+  3. 뱃지 체크 (7일/30일/180일 연속, 30일/100일 누적)
+  4. 난이도 변경 제안 (suggestLevelChange: up/down/null)
+
+PATCH /quiz/level: 난이도 1~5 변경
+POST /quiz/:id/scrap: 퀴즈 북마크 토글
 ```
 
-### 5. 외부 URL 스크랩
+### 5. 머니북 (서점)
+
+```
+GET /money-book: 카테고리별 책 목록 (isPurchased 포함)
+GET /money-book/:id: 상세 + 챕터 미리보기 + requiredFields
+POST /money-book/:id/purchase: 추가 온보딩 → AI 개인화 책 비동기 생성
+  → 챕터별 prompt_template에 {{placeholder}} 치환 → Claude API
+  → user_purchases.personalized_chapters에 저장
+```
+
+### 6. 마이북 (내 서재)
+
+```
+GET /my-book/overview: 머니레터 (상세리포트 + 구매한 책 + 스크랩 수)
+GET /my-book/books/:id: 개인화된 책 열람 + 하이라이트
+POST/DELETE 하이라이트: 문장별 컬러 스크랩 (5색)
+GET /my-book/scraps: URL + 퀴즈 스크랩 통합
+POST /my-book/generate-from-scraps: 100개 이상 → AI 맞춤 책 생성
+```
+
+### 7. 외부 URL 스크랩
 
 ```
 POST /book/scraps { url }:
-  1. URL에서 채널 자동 감지 (youtube/threads/instagram/other)
-  2. 메타데이터 추출 (제목, 크리에이터)
-  3. AI 요약: youtube/other → Claude API, threads/instagram → 전문 텍스트
-  4. DB 저장 + scrap_count 증가
-```
-
-### 6. 주간 리포트
-
-```
-POST /book/weekly-reports { weekStatus }:
-  유저 입력 + 이번 주 페이스메이커 메시지 + system_config
-  → Claude API → 가이드 생성 → DB 저장
-```
-
-### 7. 6개월 업데이트 유도
-
-```
-GET /finance/profile:
-  lastUpdated가 6개월 이전이면 isStale: true
+  1. 채널 감지 (youtube/threads/instagram/other)
+  2. 메타데이터 추출
+  3. 유튜브: youtube-transcript로 자막 추출 → Claude 요약
+     일반: URL + 제목 기반 Claude 요약
+  4. DB 저장
 ```
 
 ---
 
 ## DB 테이블
 
+### 유지
 | 테이블 | 설명 |
 |---|---|
-| `users` | 유저 (카카오 ID, 이메일, 닉네임, 마케팅 동의) |
-| `finance_profiles` | 투자 체급 (나이, 실수령액, 고정비, 수익률, 투자기간, 변동비, 등급) |
-| `pacemaker_messages` | 일일 메시지 (user_id, date, message, grade, actions JSON) |
-| `pacemaker_actions` | 추천 행동 (message_id, action_id, status, completed_at) |
-| `pacemaker_feedback` | 피드백 (message_id, type, content) |
-| `detailed_reports` | AI 상세 리포트 (title, content, pdf_url, is_free) |
-| `weekly_reports` | 주간 리포트 (week_start, user_input JSON, guide, weekly_stats JSON) |
-| `external_scraps` | 외부 스크랩 (url, channel, creator, title, ai_summary, scrap_count) |
-| `learn_contents` | 학습 콘텐츠 (slug, title, content, grade, read_minutes) |
-| `user_content_reads` | 읽음 기록 |
-| `user_content_scraps` | 학습 스크랩 |
-| `report_payments` | 결제 이력 (user_id, report_id, amount, status) |
+| `users` | 유저 (+quiz_level) |
+| `finance_profiles` | 투자 체급 (+monthly_investment) |
+| `pacemaker_messages` | 일일 메시지 |
+| `pacemaker_feedback` | 피드백 |
+| `detailed_reports` | AI 상세 리포트 (머니레터) |
+| `external_scraps` | 외부 URL 스크랩 |
+| `quizzes` | 퀴즈 (+difficulty_level) |
+| `quiz_answers` | 퀴즈 답변 |
+| `wrong_notes` | 오답 노트 |
+| `badges` | 뱃지 정의 |
+| `user_badges` | 유저 뱃지 |
+| `user_glossaries` | 용어사전 |
 | `system_config` | 운영 상수 |
+| `report_payments` | 결제 이력 (스텁) |
+
+### 신규 (v2)
+| 테이블 | 설명 |
+|---|---|
+| `attendance_records` | 출석체크 (user_id + date UNIQUE) |
+| `money_books` | 머니북 책 템플릿 |
+| `money_book_chapters` | 챕터 템플릿 (prompt_template) |
+| `user_purchases` | 유저 구매 + AI 개인화 결과 (source: store/scrap) |
+| `user_book_highlights` | 문장별 컬러 하이라이트 (5색) |
+| `user_quiz_scraps` | 퀴즈 스크랩 |
+
+### 삭제됨 (v2)
+daily_checks, weekly_summaries, monthly_finalizations, monthly_snapshots, monthly_reports, learn_contents, user_content_reads, user_content_scraps
 
 ---
 
@@ -234,9 +241,11 @@ NODE_ENV=production
 2. **금액은 원(₩) 정수**
 3. **system_config 하드코딩 금지**
 4. **페이스메이커 하루 2회 제한** (기본 1 + 새로고침 1)
-5. **AI가 수치 만들지 않게** — 데이터 직접 삽입, AI는 분석/서술만
-6. **금지 표현 필터링** — 확정 투자 권유 등 자동 차단
+5. **퀴즈 하루 1문제** — 정답/오답 무관 출석 인정
+6. **AI가 수치 만들지 않게** — 데이터 직접 삽입, AI는 분석/서술만
+7. **금지 표현 필터링** — 확정 투자 권유 등 자동 차단
+8. **커밋/배포는 유저 지시 시에만**
 
 ---
 
-*머니런 백엔드 CLAUDE.md v3.0 — 2026.04.03*
+*머니런 백엔드 CLAUDE.md v4.0 — 2026.04.11*

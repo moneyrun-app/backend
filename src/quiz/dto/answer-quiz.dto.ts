@@ -1,8 +1,7 @@
-import { IsInt, Min, Max } from 'class-validator';
+import { IsInt, Min } from 'class-validator';
 
 export class AnswerQuizDto {
   @IsInt()
-  @Min(1)
-  @Max(5)
-  userAnswer: number;
+  @Min(0)
+  answer: number;
 }

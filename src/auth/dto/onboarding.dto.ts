@@ -23,6 +23,10 @@ export class OnboardingDto {
 
   @IsInt()
   @Min(0)
+  monthlyInvestment: number;
+
+  @IsInt()
+  @Min(0)
   monthlyFixedCost: number;
 
   @IsInt()

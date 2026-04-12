@@ -32,10 +32,18 @@ export class FinanceService {
     const isStale = new Date(profile.updated_at) < sixMonthsAgo;
 
     // 계산값
+    const monthlyInvestment = profile.monthly_investment || 0;
     const monthlyExpense = profile.monthly_fixed_cost + (profile.monthly_variable_cost || 0);
-    const surplus = profile.monthly_income - monthlyExpense;
+    const surplus = profile.monthly_income - monthlyExpense - monthlyInvestment;
     const investmentPeriod = (profile.retirement_age || 55) - profile.age;
     const vestingPeriod = (profile.pension_start_age || 65) - (profile.retirement_age || 55);
+
+    // 사용 가능 예산 (실수령액 - 고정비 - 투자액)
+    const availableBudget = calculateVariableCost(
+      profile.monthly_income,
+      profile.monthly_fixed_cost,
+      monthlyInvestment,
+    );
 
     return {
       nickname: user?.nickname || null,
@@ -43,6 +51,7 @@ export class FinanceService {
       retirementAge: profile.retirement_age || 55,
       pensionStartAge: profile.pension_start_age || 65,
       monthlyIncome: profile.monthly_income,
+      monthlyInvestment,
       monthlyFixedCost: profile.monthly_fixed_cost,
       monthlyVariableCost: profile.monthly_variable_cost || 0,
       monthlyExpense,
@@ -57,6 +66,11 @@ export class FinanceService {
         daysInMonth: profile.variable_cost_daily > 0
           ? Math.round(profile.variable_cost_monthly / profile.variable_cost_daily)
           : 30,
+      },
+      availableBudget: {
+        monthly: availableBudget.monthly,
+        weekly: availableBudget.weekly,
+        daily: availableBudget.daily,
       },
       lastUpdated: profile.updated_at,
       isStale,
@@ -78,15 +92,16 @@ export class FinanceService {
     const monthlyIncome = dto.monthlyIncome ?? current.monthly_income;
     const monthlyFixedCost = dto.monthlyFixedCost ?? current.monthly_fixed_cost;
     const monthlyVariableCost = dto.monthlyVariableCost ?? (current.monthly_variable_cost || 0);
+    const monthlyInvestment = dto.monthlyInvestment ?? (current.monthly_investment || 0);
     const retirementAge = dto.retirementAge ?? (current.retirement_age || 55);
     const pensionStartAge = dto.pensionStartAge ?? (current.pension_start_age || 65);
     const age = dto.age ?? current.age;
 
     // 재계산
     const monthlyExpense = monthlyFixedCost + monthlyVariableCost;
-    const surplus = monthlyIncome - monthlyExpense;
+    const surplus = monthlyIncome - monthlyExpense - monthlyInvestment;
     const grade = calculateGrade(monthlyIncome, monthlyExpense);
-    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost);
+    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost, monthlyInvestment);
 
     const updateData: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -100,6 +115,7 @@ export class FinanceService {
     if (dto.retirementAge !== undefined) updateData.retirement_age = dto.retirementAge;
     if (dto.pensionStartAge !== undefined) updateData.pension_start_age = dto.pensionStartAge;
     if (dto.monthlyIncome !== undefined) updateData.monthly_income = dto.monthlyIncome;
+    if (dto.monthlyInvestment !== undefined) updateData.monthly_investment = dto.monthlyInvestment;
     if (dto.monthlyFixedCost !== undefined) updateData.monthly_fixed_cost = dto.monthlyFixedCost;
     if (dto.monthlyVariableCost !== undefined) updateData.monthly_variable_cost = dto.monthlyVariableCost;
 
@@ -127,6 +143,11 @@ export class FinanceService {
       investmentPeriod: retirementAge - age,
       vestingPeriod: pensionStartAge - retirementAge,
       variableCost,
+      availableBudget: {
+        monthly: variableCost.monthly,
+        weekly: variableCost.weekly,
+        daily: variableCost.daily,
+      },
     };
   }
 }
