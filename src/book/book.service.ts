@@ -191,16 +191,28 @@ export class BookService {
   // ========== 외부 URL 스크랩 ==========
 
   async createExternalScrap(userId: string, url: string) {
-    const metadata = await this.scraperService.scrapeUrl(url);
-
+    // 같은 유저가 같은 URL을 이미 스크랩했는지 확인
     const { data: existing } = await this.supabase.db
       .from('external_scraps')
-      .select('scrap_count')
+      .select('id, scrap_count')
+      .eq('user_id', userId)
       .eq('url', url)
       .limit(1)
       .single();
 
-    const scrapCount = (existing?.scrap_count || 0) + 1;
+    if (existing) {
+      throw new BadRequestException('이미 스크랩한 URL입니다.');
+    }
+
+    // 전체 스크랩 횟수 (다른 유저 포함)
+    const { count: globalCount } = await this.supabase.db
+      .from('external_scraps')
+      .select('id', { count: 'exact', head: true })
+      .eq('url', url);
+
+    const scrapCount = (globalCount || 0) + 1;
+
+    const metadata = await this.scraperService.scrapeUrl(url);
 
     const { data: saved, error } = await this.supabase.db
       .from('external_scraps')
@@ -219,13 +231,6 @@ export class BookService {
 
     if (error) {
       throw new Error(`스크랩 저장 실패: ${error.message}`);
-    }
-
-    if (existing) {
-      await this.supabase.db
-        .from('external_scraps')
-        .update({ scrap_count: scrapCount })
-        .eq('url', url);
     }
 
     return {

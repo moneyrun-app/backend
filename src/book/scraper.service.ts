@@ -27,16 +27,18 @@ export class ScraperService {
     let creator: string | null = null;
     let contentDate: string | null = null;
     let aiSummary: string | null = null;
+    let bodyText: string | null = null;
 
     try {
       const response = await fetch(url, {
-        headers: { 'User-Agent': 'MoneyRun/1.0' },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MoneyRun/1.0)' },
       });
 
       if (response.ok) {
         const html = await response.text();
         title = this.extractTitle(html);
         creator = this.extractCreator(html, channel);
+        bodyText = this.extractBodyText(html);
       }
     } catch {
       // 메타데이터 추출 실패해도 계속 진행
@@ -45,8 +47,8 @@ export class ScraperService {
     // AI 요약
     if (channel === 'youtube') {
       aiSummary = await this.summarizeYoutube(url, title);
-    } else if (channel === 'other') {
-      aiSummary = await this.summarizeWebPage(url, title);
+    } else {
+      aiSummary = await this.summarizeWebPage(url, title, bodyText);
     }
 
     return { channel, creator, contentDate, title, aiSummary };
@@ -85,12 +87,15 @@ export class ScraperService {
     );
   }
 
-  /** 일반 웹페이지: URL + 제목 기반 요약 */
-  private async summarizeWebPage(url: string, title: string | null): Promise<string | null> {
-    return this.generateSummary(
-      `다음 웹페이지의 핵심 내용을 요약해줘.\nURL: ${url}${title ? `\n제목: ${title}` : ''}`,
-      '',
-    );
+  /** 일반 웹페이지: 본문 텍스트 기반 요약 */
+  private async summarizeWebPage(url: string, title: string | null, bodyText: string | null): Promise<string | null> {
+    if (!bodyText && !title) return null;
+
+    const content = bodyText
+      ? `다음 웹페이지의 핵심 내용을 요약해줘.\n제목: ${title || '없음'}\n본문:\n${bodyText.substring(0, 3000)}`
+      : `다음 웹페이지의 핵심 내용을 제목을 바탕으로 요약해줘.\nURL: ${url}\n제목: ${title}`;
+
+    return this.generateSummary(content, '');
   }
 
   private async generateSummary(content: string, prefix: string): Promise<string | null> {
@@ -135,6 +140,34 @@ export class ScraperService {
     if (titleTag) return titleTag[1].trim();
 
     return null;
+  }
+
+  private extractBodyText(html: string): string | null {
+    // script, style, nav, header, footer 태그 제거
+    let cleaned = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+      .replace(/<header[\s\S]*?<\/header>/gi, '')
+      .replace(/<footer[\s\S]*?<\/footer>/gi, '');
+
+    // article 또는 main 태그 내용 우선 추출
+    const article = cleaned.match(/<article[\s\S]*?>([\s\S]*?)<\/article>/i);
+    const main = cleaned.match(/<main[\s\S]*?>([\s\S]*?)<\/main>/i);
+    const target = article?.[1] || main?.[1] || cleaned;
+
+    // HTML 태그 제거 → 텍스트만
+    const text = target
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return text.length > 50 ? text : null;
   }
 
   private extractCreator(html: string, channel: string): string | null {

@@ -293,9 +293,11 @@ export class MyBookService {
   // ========== 스크랩 통합 조회 ==========
 
   async getScraps(userId: string, type?: string) {
-    const result: { urlScraps: any[]; quizScraps: any[] } = {
+    const result: { urlScraps: any[]; quizScraps: any[]; highlightScraps: any[]; totalCount: number } = {
       urlScraps: [],
       quizScraps: [],
+      highlightScraps: [],
+      totalCount: 0,
     };
 
     // URL 스크랩
@@ -341,6 +343,38 @@ export class MyBookService {
         createdAt: s.created_at,
       }));
     }
+
+    // 마이북 하이라이트 스크랩
+    if (!type || type === 'highlight') {
+      const { data: highlights } = await this.supabase.db
+        .from('user_book_highlights')
+        .select('id, purchase_id, chapter_index, sentence_text, color, note, created_at, purchase:user_purchases (book_id, source, personalized_chapters, book:money_books (title))')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      result.highlightScraps = (highlights || []).map((h: any) => {
+        const purchase = h.purchase as any;
+        const isScrapBased = purchase?.source === 'scrap';
+        const chapters = purchase?.personalized_chapters as any[];
+        const bookTitle = isScrapBased
+          ? (chapters && chapters.length > 0 ? (chapters[0]?.bookTitle || '나만의 머니북') : '나만의 머니북')
+          : (purchase?.book?.title || '');
+
+        return {
+          id: h.id,
+          type: 'highlight',
+          purchaseId: h.purchase_id,
+          bookTitle,
+          chapterIndex: h.chapter_index,
+          sentenceText: h.sentence_text,
+          color: h.color,
+          note: h.note,
+          createdAt: h.created_at,
+        };
+      });
+    }
+
+    result.totalCount = result.urlScraps.length + result.quizScraps.length + result.highlightScraps.length;
 
     return result;
   }
