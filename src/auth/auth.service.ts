@@ -52,6 +52,7 @@ export class AuthService {
         email: user.email,
         isNewUser,
         hasCompletedOnboarding: user.has_completed_onboarding,
+        onboardingVersion: user.onboarding_version ?? 2,
       },
     };
   }

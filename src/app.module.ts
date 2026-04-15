@@ -14,6 +14,7 @@ import { AdminModule } from './admin/admin.module';
 import { StatisticsModule } from './statistics/statistics.module';
 import { MoneyBookModule } from './money-book/money-book.module';
 import { MyBookModule } from './my-book/my-book.module';
+import { CourseModule } from './course/course.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { MyBookModule } from './my-book/my-book.module';
     StatisticsModule,
     MoneyBookModule,
     MyBookModule,
+    CourseModule,
   ],
 })
 export class AppModule {}

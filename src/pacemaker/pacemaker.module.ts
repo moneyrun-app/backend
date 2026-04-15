@@ -5,9 +5,10 @@ import { MessageGenerator } from './message.generator';
 import { FinanceModule } from '../finance/finance.module';
 import { ConstantsModule } from '../constants/constants.module';
 import { QuizModule } from '../quiz/quiz.module';
+import { CourseModule } from '../course/course.module';
 
 @Module({
-  imports: [FinanceModule, ConstantsModule, QuizModule],
+  imports: [FinanceModule, ConstantsModule, QuizModule, CourseModule],
   controllers: [PacemakerController],
   providers: [PacemakerService, MessageGenerator],
 })

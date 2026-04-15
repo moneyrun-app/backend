@@ -75,20 +75,43 @@ export class MyBookService {
 
     const totalScrapCount = (urlScrapCount || 0) + (quizScrapCount || 0);
 
+    // 코스 책 제목 조회 (user_courses → courses 조인)
+    const { data: userCourses } = await this.supabase.db
+      .from('user_courses')
+      .select('purchase_id, current_chapter, courses (title, category, chapter_count)')
+      .eq('user_id', userId);
+
+    const courseMap = new Map(
+      (userCourses || []).map((uc: any) => [uc.purchase_id, uc]),
+    );
+
     // 응답 조립
     const purchasedBooks = (purchases || []).map((p: any) => {
       const isScrapBased = p.source === 'scrap';
+      const isCourseBased = p.source === 'course';
       const chapters = p.personalized_chapters as any[];
-      const bookTitle = isScrapBased
-        ? (chapters && chapters.length > 0 ? (chapters[0]?.bookTitle || '나만의 머니북') : '나만의 머니북')
-        : (p.book?.title || '');
+
+      let bookTitle: string;
+      let category: string;
+
+      if (isCourseBased) {
+        const courseInfo = courseMap.get(p.id);
+        bookTitle = courseInfo?.courses?.title || '코스 마이북';
+        category = courseInfo?.courses?.category || 'course';
+      } else if (isScrapBased) {
+        bookTitle = chapters && chapters.length > 0 ? (chapters[0]?.bookTitle || '나만의 머니북') : '나만의 머니북';
+        category = 'scrap-generated';
+      } else {
+        bookTitle = p.book?.title || '';
+        category = p.book?.category || '';
+      }
 
       return {
         purchaseId: p.id,
         bookId: p.book_id,
         bookTitle,
-        category: isScrapBased ? 'scrap-generated' : (p.book?.category || ''),
-        coverImageUrl: isScrapBased ? null : (p.book?.cover_image_url || null),
+        category,
+        coverImageUrl: (isScrapBased || isCourseBased) ? null : (p.book?.cover_image_url || null),
         source: p.source,
         status: p.status,
         highlightCount: highlightCountsByPurchase[p.id] || 0,
@@ -96,7 +119,22 @@ export class MyBookService {
       };
     });
 
+    // 활성 코스 마이북 (별도 필드)
+    const activeCourseEntry = (userCourses || []).find(
+      (uc: any) => uc.courses && uc.purchase_id,
+    );
+    const courseBook = activeCourseEntry
+      ? {
+          purchaseId: activeCourseEntry.purchase_id,
+          courseTitle: (activeCourseEntry as any).courses?.title || '코스 마이북',
+          currentChapter: activeCourseEntry.current_chapter || 1,
+          totalChapters: (activeCourseEntry as any).courses?.chapter_count || 5,
+          status: (purchases || []).find((p: any) => p.id === activeCourseEntry.purchase_id)?.status || 'generating',
+        }
+      : null;
+
     return {
+      courseBook,
       detailedReport: latestReport
         ? {
             id: latestReport.id,

@@ -6,6 +6,8 @@ import { FinanceService } from '../finance/finance.service';
 import { ConstantsService } from '../constants/constants.service';
 import { MessageGenerator } from './message.generator';
 import { QuizService } from '../quiz/quiz.service';
+import { CourseService } from '../course/course.service';
+import { MissionService } from '../course/mission.service';
 import { FeedbackDto } from './dto/feedback.dto';
 
 @Injectable()
@@ -16,6 +18,8 @@ export class PacemakerService {
     private readonly constantsService: ConstantsService,
     private readonly messageGenerator: MessageGenerator,
     private readonly quizService: QuizService,
+    private readonly courseService: CourseService,
+    private readonly missionService: MissionService,
   ) {}
 
   async getTodayMessage(userId: string, nickname: string) {
@@ -55,10 +59,16 @@ export class PacemakerService {
       .limit(1)
       .single();
 
+    // 활성 코스 조회 (캐시 응답에도 필요)
+    const activeCourse = await this.courseService.getActiveCourse(userId);
+
     if (cached) {
-      const todayQuiz = await this.quizService.getTodayQuiz(userId);
+      const todayQuiz = await this.quizService.getTodayQuiz(
+        userId,
+        activeCourse?.category || undefined,
+      );
       const attendance = await this.getAttendanceInfo(userId, today);
-      return this.formatResponse(cached, todayQuiz, attendance);
+      return this.formatResponse(cached, todayQuiz, attendance, activeCourse);
     }
 
     try {
@@ -74,9 +84,12 @@ export class PacemakerService {
           .single();
 
         if (retry) {
-          const todayQuiz = await this.quizService.getTodayQuiz(userId);
+          const todayQuiz = await this.quizService.getTodayQuiz(
+            userId,
+            activeCourse?.category || undefined,
+          );
           const attendance = await this.getAttendanceInfo(userId, today);
-          return this.formatResponse(retry, todayQuiz, attendance);
+          return this.formatResponse(retry, todayQuiz, attendance, activeCourse);
         }
       }
       throw e;
@@ -106,6 +119,18 @@ export class PacemakerService {
     const profile = await this.financeService.getFullProfile(userId);
     const configMap = await this.constantsService.getConfigMap();
 
+    // 활성 코스 조회
+    const activeCourse = await this.courseService.getActiveCourse(userId);
+    let missionProgress: any = null;
+    if (activeCourse) {
+      missionProgress = await this.missionService.getMissionProgress(
+        userId,
+        activeCourse.userCourseId,
+        activeCourse.courseId,
+        activeCourse.currentChapter,
+      );
+    }
+
     const recentScraps = await this.supabase.db
       .from('external_scraps')
       .select('title, channel')
@@ -124,6 +149,16 @@ export class PacemakerService {
       today,
       dayOfWeek: this.getDayOfWeekKR(),
       dayOfWeekIndex: kst.getUTCDay(),
+      activeCourse: activeCourse
+        ? {
+            category: activeCourse.category,
+            level: activeCourse.level,
+            title: activeCourse.title,
+            currentChapter: activeCourse.currentChapter,
+            totalChapters: activeCourse.totalChapters,
+          }
+        : null,
+      missionProgress,
     };
 
     const { cards, theme, quote } = await this.messageGenerator.generate(contextData);
@@ -139,6 +174,9 @@ export class PacemakerService {
         theme,
         quote,
         disclaimer: '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
+        course_id: activeCourse?.courseId || null,
+        course_chapter: activeCourse?.currentChapter || null,
+        mission_context: missionProgress || null,
       })
       .select()
       .single();
@@ -148,10 +186,14 @@ export class PacemakerService {
       throw new Error(`메시지 저장 실패: ${saveError?.message || 'INSERT 반환값 없음'}`);
     }
 
-    const todayQuiz = await this.quizService.getTodayQuiz(userId);
+    // 코스 카테고리 기반 퀴즈
+    const todayQuiz = await this.quizService.getTodayQuiz(
+      userId,
+      activeCourse?.category || undefined,
+    );
     const attendance = await this.getAttendanceInfo(userId, today);
 
-    return this.formatResponse(saved, todayQuiz, attendance);
+    return this.formatResponse(saved, todayQuiz, attendance, activeCourse);
   }
 
   private async getAttendanceInfo(userId: string, today: string) {
@@ -208,7 +250,7 @@ export class PacemakerService {
     return [];
   }
 
-  private formatResponse(row: any, todayQuiz: any, attendance: any) {
+  private formatResponse(row: any, todayQuiz: any, attendance: any, activeCourse?: any) {
     return {
       id: row.id,
       date: row.date,
@@ -220,6 +262,17 @@ export class PacemakerService {
       attendance,
       disclaimer: row.disclaimer || '참고용 조언이며, 개인 상황에 따라 다를 수 있어요',
       createdAt: row.created_at,
+      activeCourse: activeCourse
+        ? {
+            courseId: activeCourse.courseId,
+            title: activeCourse.title,
+            category: activeCourse.category,
+            level: activeCourse.level,
+            currentChapter: activeCourse.currentChapter,
+            totalChapters: activeCourse.totalChapters,
+            missionSummary: activeCourse.missionSummary,
+          }
+        : null,
     };
   }
 

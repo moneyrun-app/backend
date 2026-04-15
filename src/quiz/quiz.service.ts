@@ -13,8 +13,8 @@ export class QuizService {
       .single();
   }
 
-  /** 오늘의 퀴즈 1문제 (유저 레벨 기반) — 이미 풀었으면 null 반환 */
-  async getTodayQuiz(userId: string) {
+  /** 오늘의 퀴즈 1문제 (유저 레벨 기반, 코스 카테고리 필터) — 이미 풀었으면 null 반환 */
+  async getTodayQuiz(userId: string, courseCategory?: string) {
     // 오늘 이미 출석했으면 null
     const today = this.getTodayKST();
     const { data: attendance } = await this.supabase.db
@@ -40,12 +40,20 @@ export class QuizService {
     if (useWrongNote) {
       const { data: wrongNotes } = await this.supabase.db
         .from('wrong_notes')
-        .select('quiz_id, quiz:quizzes (id, question, choices, source, category, difficulty_level)')
+        .select('quiz_id, quiz:quizzes (id, question, choices, source, category, difficulty_level, course_category)')
         .eq('user_id', userId)
-        .limit(5);
+        .limit(10);
 
-      if (wrongNotes && wrongNotes.length > 0) {
-        const pick = wrongNotes[Math.floor(Math.random() * wrongNotes.length)];
+      let filteredNotes = wrongNotes || [];
+      if (courseCategory && filteredNotes.length > 0) {
+        const courseScopedNotes = filteredNotes.filter(
+          (n: any) => n.quiz?.course_category === courseCategory,
+        );
+        if (courseScopedNotes.length > 0) filteredNotes = courseScopedNotes;
+      }
+
+      if (filteredNotes.length > 0) {
+        const pick = filteredNotes[Math.floor(Math.random() * filteredNotes.length)];
         const q = pick.quiz as any;
         return {
           id: q.id,
@@ -71,6 +79,11 @@ export class QuizService {
       .select('id, question, choices, source, category, difficulty_level')
       .eq('difficulty_level', level);
 
+    // 코스 카테고리 필터
+    if (courseCategory) {
+      query = query.eq('course_category', courseCategory);
+    }
+
     if (excludeIds.length > 0) {
       query = query.not('id', 'in', `(${excludeIds.join(',')})`);
     }
@@ -78,16 +91,33 @@ export class QuizService {
     const { data: quizzes } = await query;
 
     if (!quizzes || quizzes.length === 0) {
-      // 해당 레벨에 퀴즈가 없으면 전체에서 랜덤
+      // 해당 레벨+카테고리에 퀴즈가 없으면 카테고리만으로 재시도, 그래도 없으면 전체
       let fallbackQuery = this.supabase.db
         .from('quizzes')
         .select('id, question, choices, source, category, difficulty_level');
+
+      if (courseCategory) {
+        fallbackQuery = fallbackQuery.eq('course_category', courseCategory);
+      }
 
       if (excludeIds.length > 0) {
         fallbackQuery = fallbackQuery.not('id', 'in', `(${excludeIds.join(',')})`);
       }
 
-      const { data: fallback } = await fallbackQuery;
+      let { data: fallback } = await fallbackQuery;
+
+      // 코스 카테고리에도 퀴즈가 없으면 전체에서
+      if ((!fallback || fallback.length === 0) && courseCategory) {
+        let allQuery = this.supabase.db
+          .from('quizzes')
+          .select('id, question, choices, source, category, difficulty_level');
+        if (excludeIds.length > 0) {
+          allQuery = allQuery.not('id', 'in', `(${excludeIds.join(',')})`);
+        }
+        const allResult = await allQuery;
+        fallback = allResult.data;
+      }
+
       if (!fallback || fallback.length === 0) return null;
 
       const pick = fallback[Math.floor(Math.random() * fallback.length)];

@@ -17,6 +17,18 @@ interface MessageContext {
   today: string;
   dayOfWeek: string;
   dayOfWeekIndex: number;
+  activeCourse?: {
+    category: string;
+    level: string;
+    title: string;
+    currentChapter: number;
+    totalChapters: number;
+  } | null;
+  missionProgress?: {
+    totalMissions: number;
+    completedMissions: number;
+    currentChapterMissions: Array<{ title: string; type: string; completed: boolean }>;
+  } | null;
 }
 
 export interface MessageCard {
@@ -87,7 +99,7 @@ export class MessageGenerator {
   }
 
   private buildPrompt(context: MessageContext): string {
-    const { profile, nickname, configMap, recentScraps, today, dayOfWeek, dayOfWeekIndex } = context;
+    const { profile, nickname, configMap, recentScraps, today, dayOfWeek, dayOfWeekIndex, activeCourse, missionProgress } = context;
 
     const themeInfo = DAILY_THEMES[dayOfWeekIndex] || DAILY_THEMES[3];
 
@@ -134,7 +146,18 @@ ${themeInfo.guide}
 
 ## 톤 가이드
 ${toneGuide[profile.grade] || toneGuide.YELLOW}
+${activeCourse ? `
+## 코스 정보
+- 현재 수강 중: ${activeCourse.title} (${activeCourse.currentChapter}/${activeCourse.totalChapters}장)
+- 미션 진행: ${missionProgress?.completedMissions || 0}/${missionProgress?.totalMissions || 0}개 완료
+${missionProgress?.currentChapterMissions?.length ? `- 오늘의 챕터 미션: ${missionProgress.currentChapterMissions.map(m => `${m.completed ? '✅' : '⬜'} ${m.title}`).join(', ')}` : ''}
 
+## 코스 관련 카드 규칙
+- 5카드 중 최소 1장은 코스 진행/미션 관련 내용으로 작성
+- "어제 N장 미션 했죠? 오늘 N+1장 가볼까요?" 같은 자연스러운 진행 유도
+- 미션을 완료하지 않았다면 "아직 미션 안 했지? 오늘 해보자" 식으로 넛지
+- 코스 주제(${activeCourse.category})와 관련된 금융 팁도 포함
+` : ''}
 ## 규칙
 1. 반말 사용. 찐친처럼 자연스럽게. 반드시 "${nickname}아" 또는 "${nickname}야"로 시작.
 2. **카드 5장** 형식으로 작성해. 각 카드는 하나의 주제를 깊이 있게 다뤄.
