@@ -25,7 +25,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (!progress) {
       return {
@@ -78,10 +78,10 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('id')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (existing) {
-      await this.supabase.db
+      const { error } = await this.supabase.db
         .from('onboarding_progress')
         .update({
           selected_category: category,
@@ -93,8 +93,12 @@ export class OnboardingService {
           updated_at: now,
         })
         .eq('user_id', userId);
+
+      if (error) {
+        throw new BadRequestException(`온보딩 업데이트 실패: ${error.message}`);
+      }
     } else {
-      await this.supabase.db
+      const { error } = await this.supabase.db
         .from('onboarding_progress')
         .insert({
           user_id: userId,
@@ -102,6 +106,10 @@ export class OnboardingService {
           current_step: 2,
           updated_at: now,
         });
+
+      if (error) {
+        throw new BadRequestException(`온보딩 생성 실패: ${error.message}`);
+      }
     }
 
     return { nextStep: 2, selectedCategory: category };
@@ -113,7 +121,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('selected_category')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (!progress?.selected_category) {
       throw new BadRequestException('Step 1을 먼저 완료해주세요.');
@@ -136,7 +144,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('selected_category')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (!progress?.selected_category) {
       throw new BadRequestException('Step 1을 먼저 완료해주세요.');
@@ -208,7 +216,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('course_id')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (!progress?.course_id) {
       throw new BadRequestException('Step 2를 먼저 완료해주세요.');
@@ -232,7 +240,7 @@ export class OnboardingService {
       .from('finance_profiles')
       .select('id')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     const profileData = {
       user_id: userId,
@@ -299,7 +307,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (!progress?.finance_data || !progress.course_id) {
       throw new BadRequestException('Step 3를 먼저 완료해주세요.');
@@ -367,17 +375,34 @@ export class OnboardingService {
     };
   }
 
-  /** Step 4: 생성 상태 폴링 */
+  /** Step 4: 생성 상태 폴링 (진행률 포함) */
   async step4Status(userId: string) {
     const { data: progress } = await this.supabase.db
       .from('onboarding_progress')
       .select('generation_status, generation_purchase_id')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
+
+    // 진행률 조회
+    let generationProgress = null;
+    if (progress?.generation_purchase_id) {
+      const { data: purchase } = await this.supabase.db
+        .from('user_purchases')
+        .select('generation_progress')
+        .eq('id', progress.generation_purchase_id)
+        .single();
+      generationProgress = purchase?.generation_progress || null;
+    }
 
     return {
       status: progress?.generation_status || 'pending',
       purchaseId: progress?.generation_purchase_id || null,
+      progress: generationProgress || {
+        step: '대기 중',
+        percent: 0,
+        chaptersDone: 0,
+        totalChapters: 0,
+      },
     };
   }
 
@@ -387,7 +412,7 @@ export class OnboardingService {
       .from('onboarding_progress')
       .select('course_id, generation_status')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (progress?.generation_status !== 'completed') {
       throw new BadRequestException('마이북 생성이 아직 완료되지 않았습니다.');

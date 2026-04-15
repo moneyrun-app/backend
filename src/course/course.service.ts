@@ -5,12 +5,14 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 import { MissionService } from './mission.service';
+import { CourseBookGenerator } from './course-book.generator';
 
 @Injectable()
 export class CourseService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly missionService: MissionService,
+    private readonly courseBookGenerator: CourseBookGenerator,
   ) {}
 
   /** 유저의 활성 코스 조회 */
@@ -179,6 +181,33 @@ export class CourseService {
       throw new Error(`코스 등록 실패: ${ucError.message}`);
     }
 
+    // 유저 재무 데이터 조회
+    const { data: profile } = await this.supabase.db
+      .from('finance_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const financeData = profile ? {
+      nickname: (await this.supabase.db.from('users').select('nickname').eq('id', userId).single()).data?.nickname || '유저',
+      age: profile.age,
+      retirementAge: profile.retirement_age,
+      monthlyIncome: profile.monthly_income,
+      monthlyInvestment: profile.monthly_investment,
+      monthlyFixedCost: profile.monthly_fixed_cost,
+      monthlyVariableCost: profile.monthly_variable_cost,
+    } : { nickname: '유저' };
+
+    // 비동기 AI 마이북 생성 (기다리지 않음)
+    this.courseBookGenerator.generateCourseBook(
+      purchase.id,
+      userId,
+      courseId,
+      financeData,
+      {},
+      [],
+    );
+
     return {
       userCourseId: userCourse.id,
       purchaseId: purchase.id,
@@ -236,6 +265,29 @@ export class CourseService {
         daysSpent,
       },
       nextRecommendation,
+    };
+  }
+
+  /** 마이북 생성 진행률 조회 */
+  async getGenerationStatus(purchaseId: string) {
+    const { data } = await this.supabase.db
+      .from('user_purchases')
+      .select('status, generation_progress')
+      .eq('id', purchaseId)
+      .single();
+
+    if (!data) {
+      return { status: 'not_found', progress: null };
+    }
+
+    return {
+      status: data.status,
+      progress: data.generation_progress || {
+        step: '대기 중',
+        percent: 0,
+        chaptersDone: 0,
+        totalChapters: 0,
+      },
     };
   }
 

@@ -78,8 +78,9 @@ export class MyBookService {
     // 코스 책 제목 조회 (user_courses → courses 조인)
     const { data: userCourses } = await this.supabase.db
       .from('user_courses')
-      .select('purchase_id, current_chapter, courses (title, category, chapter_count)')
-      .eq('user_id', userId);
+      .select('purchase_id, current_chapter, status, courses (title, category, chapter_count)')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
     const courseMap = new Map(
       (userCourses || []).map((uc: any) => [uc.purchase_id, uc]),
@@ -119,10 +120,10 @@ export class MyBookService {
       };
     });
 
-    // 활성 코스 마이북 (별도 필드)
-    const activeCourseEntry = (userCourses || []).find(
-      (uc: any) => uc.courses && uc.purchase_id,
-    );
+    // 코스 마이북 (active 우선, 없으면 최근 completed)
+    const activeCourseEntry =
+      (userCourses || []).find((uc: any) => uc.courses && uc.purchase_id && uc.status === 'active') ||
+      (userCourses || []).find((uc: any) => uc.courses && uc.purchase_id);
     const courseBook = activeCourseEntry
       ? {
           purchaseId: activeCourseEntry.purchase_id,
