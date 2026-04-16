@@ -4,6 +4,8 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnswerQuizDto } from './dto/answer-quiz.dto';
 
+const DIFFICULTY_LABELS: Record<number, string> = { 1: '초급', 2: '심화', 3: '마스터' };
+
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class QuizController {
@@ -15,9 +17,11 @@ export class QuizController {
   async getTodayQuiz(@CurrentUser('id') userId: string) {
     const quiz = await this.quizService.getTodayQuiz(userId);
     const { data: user } = await this.quizService.getUserLevel(userId);
+    const level = user?.quiz_level || 1;
     return {
       quiz,               // null이면 이미 풀었음
-      currentLevel: user?.quiz_level || 1,
+      currentLevel: level,
+      currentLevelLabel: DIFFICULTY_LABELS[level] || '초급',
       solvedToday: quiz === null,
     };
   }

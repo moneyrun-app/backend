@@ -8,7 +8,6 @@ export interface VariableCost {
 export function calculateVariableCost(
   monthlyIncome: number,
   monthlyFixedCost: number,
-  monthlyInvestment: number = 0,
 ): VariableCost {
   const floor1000 = (n: number) => Math.floor(n / 1000) * 1000;
 
@@ -19,7 +18,8 @@ export function calculateVariableCost(
   const month = kst.getUTCMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
-  const monthly = floor1000(monthlyIncome - monthlyFixedCost - monthlyInvestment);
+  // 고정비는 투자금을 이미 포함하므로 별도 차감 불필요
+  const monthly = floor1000(monthlyIncome - monthlyFixedCost);
   const daily = floor1000(monthly / daysInMonth);
   const weekly = floor1000(daily * 7);
 

@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 
+/** 난이도 매핑: 1=초급, 2=심화, 3=마스터 */
+const DIFFICULTY_LABELS: Record<number, string> = { 1: '초급', 2: '심화', 3: '마스터' };
+
 @Injectable()
 export class QuizService {
   constructor(private readonly supabase: SupabaseService) {}
@@ -40,7 +43,7 @@ export class QuizService {
     if (useWrongNote) {
       const { data: wrongNotes } = await this.supabase.db
         .from('wrong_notes')
-        .select('quiz_id, quiz:quizzes (id, question, choices, source, category, difficulty_level, course_category)')
+        .select('quiz_id, quiz:quizzes (id, quiz_code, question, choices, hint, source, category, difficulty_level, course_category, total_attempts, correct_count, correct_rate)')
         .eq('user_id', userId)
         .limit(10);
 
@@ -55,13 +58,20 @@ export class QuizService {
       if (filteredNotes.length > 0) {
         const pick = filteredNotes[Math.floor(Math.random() * filteredNotes.length)];
         const q = pick.quiz as any;
+        const dl = q.difficulty_level || level;
         return {
           id: q.id,
+          quizCode: q.quiz_code,
           question: q.question,
           choices: q.choices,
-          difficultyLevel: q.difficulty_level || level,
+          hint: q.hint,
+          difficultyLevel: dl,
+          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
           source: '오답노트 복습',
           category: q.category,
+          totalAttempts: q.total_attempts || 0,
+          correctCount: q.correct_count || 0,
+          correctRate: q.correct_rate || 0,
         };
       }
     }
@@ -76,7 +86,7 @@ export class QuizService {
 
     let query = this.supabase.db
       .from('quizzes')
-      .select('id, question, choices, source, category, difficulty_level')
+      .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate')
       .eq('difficulty_level', level);
 
     // 코스 카테고리 필터
@@ -94,7 +104,7 @@ export class QuizService {
       // 해당 레벨+카테고리에 퀴즈가 없으면 카테고리만으로 재시도, 그래도 없으면 전체
       let fallbackQuery = this.supabase.db
         .from('quizzes')
-        .select('id, question, choices, source, category, difficulty_level');
+        .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
 
       if (courseCategory) {
         fallbackQuery = fallbackQuery.eq('course_category', courseCategory);
@@ -110,7 +120,7 @@ export class QuizService {
       if ((!fallback || fallback.length === 0) && courseCategory) {
         let allQuery = this.supabase.db
           .from('quizzes')
-          .select('id, question, choices, source, category, difficulty_level');
+          .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
         if (excludeIds.length > 0) {
           allQuery = allQuery.not('id', 'in', `(${excludeIds.join(',')})`);
         }
@@ -121,24 +131,38 @@ export class QuizService {
       if (!fallback || fallback.length === 0) return null;
 
       const pick = fallback[Math.floor(Math.random() * fallback.length)];
+      const dl = pick.difficulty_level || 1;
       return {
         id: pick.id,
+        quizCode: pick.quiz_code,
         question: pick.question,
         choices: pick.choices,
-        difficultyLevel: pick.difficulty_level || 1,
+        hint: pick.hint,
+        difficultyLevel: dl,
+        difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
         source: pick.source,
         category: pick.category,
+        totalAttempts: pick.total_attempts || 0,
+        correctCount: pick.correct_count || 0,
+        correctRate: pick.correct_rate || 0,
       };
     }
 
     const pick = quizzes[Math.floor(Math.random() * quizzes.length)];
+    const dl = pick.difficulty_level || level;
     return {
       id: pick.id,
+      quizCode: pick.quiz_code,
       question: pick.question,
       choices: pick.choices,
-      difficultyLevel: pick.difficulty_level || level,
+      hint: pick.hint,
+      difficultyLevel: dl,
+      difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
       source: pick.source,
       category: pick.category,
+      totalAttempts: pick.total_attempts || 0,
+      correctCount: pick.correct_count || 0,
+      correctRate: pick.correct_rate || 0,
     };
   }
 
@@ -156,21 +180,31 @@ export class QuizService {
     const retryCount = Math.ceil(count * 0.3);
     const { data: wrongNotes } = await this.supabase.db
       .from('wrong_notes')
-      .select('id, quiz_id, quiz:quizzes (id, question, choices, source, category)')
+      .select('id, quiz_id, quiz:quizzes (id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate)')
       .eq('user_id', userId)
       .limit(retryCount * 2);
 
     const retryQuizzes = (wrongNotes || [])
       .sort(() => Math.random() - 0.5)
       .slice(0, retryCount)
-      .map((n: any) => ({
-        id: n.quiz?.id,
-        question: n.quiz?.question,
-        choices: n.quiz?.choices,
-        source: '오답노트 복습',
-        category: n.quiz?.category,
-        wrongNoteId: n.id,
-      }));
+      .map((n: any) => {
+        const dl = n.quiz?.difficulty_level || 1;
+        return {
+          id: n.quiz?.id,
+          quizCode: n.quiz?.quiz_code,
+          question: n.quiz?.question,
+          choices: n.quiz?.choices,
+          hint: n.quiz?.hint,
+          difficultyLevel: dl,
+          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
+          source: '오답노트 복습',
+          category: n.quiz?.category,
+          totalAttempts: n.quiz?.total_attempts || 0,
+          correctCount: n.quiz?.correct_count || 0,
+          correctRate: n.quiz?.correct_rate || 0,
+          wrongNoteId: n.id,
+        };
+      });
 
     result.push(...retryQuizzes);
     const retryQuizIds = retryQuizzes.map((q: any) => q.id);
@@ -190,7 +224,7 @@ export class QuizService {
 
       let query = this.supabase.db
         .from('quizzes')
-        .select('id, question, choices, source, category');
+        .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
 
       if (excludeIds.length > 0) {
         query = query.not('id', 'in', `(${excludeIds.join(',')})`);
@@ -199,13 +233,23 @@ export class QuizService {
       const { data: newQuizzes } = await query;
 
       const shuffled = (newQuizzes || []).sort(() => Math.random() - 0.5);
-      result.push(...shuffled.slice(0, remaining).map((q: any) => ({
-        id: q.id,
-        question: q.question,
-        choices: q.choices,
-        source: q.source,
-        category: q.category,
-      })));
+      result.push(...shuffled.slice(0, remaining).map((q: any) => {
+        const dl = q.difficulty_level || 1;
+        return {
+          id: q.id,
+          quizCode: q.quiz_code,
+          question: q.question,
+          choices: q.choices,
+          hint: q.hint,
+          difficultyLevel: dl,
+          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
+          source: q.source,
+          category: q.category,
+          totalAttempts: q.total_attempts || 0,
+          correctCount: q.correct_count || 0,
+          correctRate: q.correct_rate || 0,
+        };
+      }));
     }
 
     // 전체 셔플 — correct_answer, brief/detailed_explanation 절대 미포함
@@ -339,7 +383,7 @@ export class QuizService {
 
     const currentLevel = user?.quiz_level || 1;
     let suggestLevelChange: 'up' | 'down' | null = null;
-    if (result.correct && currentLevel < 5) suggestLevelChange = 'up';
+    if (result.correct && currentLevel < 3) suggestLevelChange = 'up';
     if (!result.correct && currentLevel > 1) suggestLevelChange = 'down';
 
     return {
@@ -353,14 +397,14 @@ export class QuizService {
   // ========== 난이도 변경 ==========
 
   async changeQuizLevel(userId: string, level: number) {
-    const clamped = Math.max(1, Math.min(5, Math.round(level)));
+    const clamped = Math.max(1, Math.min(3, Math.round(level)));
 
     await this.supabase.db
       .from('users')
       .update({ quiz_level: clamped })
       .eq('id', userId);
 
-    return { newLevel: clamped };
+    return { newLevel: clamped, newLevelLabel: DIFFICULTY_LABELS[clamped] || '초급' };
   }
 
   // ========== 출석 현황 ==========
@@ -444,11 +488,15 @@ export class QuizService {
 
     return {
       month,
-      records: (records || []).map((r: any) => ({
-        date: r.date,
-        isCorrect: r.is_correct,
-        quizLevel: r.quiz?.difficulty_level || 1,
-      })),
+      records: (records || []).map((r: any) => {
+        const dl = r.quiz?.difficulty_level || 1;
+        return {
+          date: r.date,
+          isCorrect: r.is_correct,
+          quizLevel: dl,
+          quizLevelLabel: DIFFICULTY_LABELS[dl] || '초급',
+        };
+      }),
     };
   }
 

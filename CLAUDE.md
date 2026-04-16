@@ -26,6 +26,7 @@
 |---|---|
 | `docs/기획서_v3.0_2026-04-15.md` | v3.0 전체 기획서 (코스 시스템) |
 | `docs/프론트엔드_전달사항_2026-04-15.md` | 프론트엔드 API 명세 + 페이지 가이드 |
+| `migrations/v3.2_2026-04-16_quiz_schema.sql` | v3.2 퀴즈 스키마 개선 (구분코드, 3단계 난이도, 힌트, 통계) |
 | `migrations/v3.0_2026-04-15_courses.sql` | v3.0 DB 마이그레이션 SQL |
 | `migrations/v2.0_2026-04-11.sql` | v2.0 DB 마이그레이션 SQL (이전) |
 
@@ -224,9 +225,18 @@ GET /pacemaker/today:
   하루 2회 제한
 ```
 
-### 7. 퀴즈/출석 시스템 (v3 — 코스 스코핑)
+### 7. 퀴즈/출석 시스템 (v3.2 — 코스 스코핑 + 구분코드/통계)
 
 ```
+퀴즈 필수 필드:
+  quiz_code: Q00001 형식 (자동 채번, UNIQUE)
+  difficulty_level: 1=초급, 2=심화, 3=마스터 (3단계)
+  question, choices(JSONB), correct_answer(1-indexed)
+  hint: 힌트 텍스트
+  source: 퀴즈 출처
+  total_attempts / correct_count / correct_rate: 일배치 집계
+    → SELECT refresh_quiz_stats(); 으로 갱신
+
 데일리 퀴즈 선택 로직:
   1. 유저 활성 코스 확인 → course_category 획득
   2. quizzes에서 course_category + difficulty_level 필터
@@ -240,7 +250,7 @@ POST /quiz/:id/answer:
   3. 뱃지 체크 (7일/30일/180일 연속, 30일/100일 누적)
   4. 난이도 변경 제안 (suggestLevelChange: up/down/null)
 
-quizzes 테이블에 course_category 컬럼 추가:
+quizzes 테이블에 course_category 컬럼:
   기존 category(자유 텍스트) → course_category(5개 코스 카테고리로 매핑)
 ```
 
@@ -287,7 +297,7 @@ POST /book/scraps { url }:
 | `pacemaker_feedback` | 피드백 |
 | `detailed_reports` | AI 상세 리포트 (머니레터) |
 | `external_scraps` | 외부 URL 스크랩 |
-| `quizzes` | 퀴즈 (+difficulty_level, +course_category) |
+| `quizzes` | 퀴즈 (+quiz_code, +difficulty_level 3단계, +hint, +course_category, +total_attempts/correct_count/correct_rate) |
 | `quiz_answers` | 퀴즈 답변 |
 | `wrong_notes` | 오답 노트 |
 | `badges` | 뱃지 정의 |

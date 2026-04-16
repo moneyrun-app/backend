@@ -5,11 +5,11 @@ import { SupabaseService } from '../common/supabase/supabase.service';
 export class DiagnosticService {
   constructor(private readonly supabase: SupabaseService) {}
 
-  /** 카테고리별 진단퀴즈 10문제 조회 */
+  /** 카테고리별 진단퀴즈 10문제 조회 (힌트 포함) */
   async getQuestions(category: string) {
     const { data: questions, error } = await this.supabase.db
       .from('diagnostic_quizzes')
-      .select('id, question, choices, correct_answer, difficulty_weight, brief_explanation')
+      .select('id, question, choices, correct_answer, difficulty_weight, brief_explanation, hint')
       .eq('category', category)
       .order('difficulty_weight', { ascending: true })
       .limit(10);
@@ -22,6 +22,7 @@ export class DiagnosticService {
       id: q.id,
       question: q.question,
       choices: q.choices,
+      hint: q.hint || null,
     }));
   }
 
@@ -84,11 +85,11 @@ export class DiagnosticService {
 
     const scoreRatio = totalWeight > 0 ? earnedWeight / totalWeight : 0;
 
-    // 레벨 배정
+    // 레벨 배정 — 정답 수 기준
     let assignedLevel: string;
-    if (scoreRatio <= 0.3) {
+    if (correctCount <= 4) {
       assignedLevel = '기초';
-    } else if (scoreRatio <= 0.7) {
+    } else if (correctCount <= 6) {
       assignedLevel = '심화';
     } else {
       assignedLevel = '마스터';

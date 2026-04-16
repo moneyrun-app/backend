@@ -8,9 +8,8 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OnboardingService } from './onboarding.service';
-import { SelectCategoryDto } from './dto/select-category.dto';
+import { SelectLevelDto } from './dto/select-level.dto';
 import { SubmitDiagnosticDto } from './dto/submit-diagnostic.dto';
-import { SubmitFinanceDataDto } from './dto/submit-finance-data.dto';
 
 @Controller('course/onboarding')
 @UseGuards(JwtAuthGuard)
@@ -23,49 +22,33 @@ export class OnboardingController {
     return this.onboardingService.getStatus(req.user.id);
   }
 
-  /** Step 1: 관심 분야 선택 */
-  @Post('step1')
-  step1(@Request() req: any, @Body() dto: SelectCategoryDto) {
-    return this.onboardingService.step1SelectCategory(req.user.id, dto.category);
+  /** 코스 레벨 선택: 기초부터 시작 or 내 레벨 찾기 */
+  @Post('select-level')
+  selectLevel(@Request() req: any, @Body() dto: SelectLevelDto) {
+    return this.onboardingService.selectLevel(req.user.id, dto.choice);
   }
 
-  /** Step 2: 진단퀴즈 문제 조회 */
-  @Get('step2/questions')
-  step2Questions(@Request() req: any) {
-    return this.onboardingService.step2GetQuestions(req.user.id);
+  /** 진단퀴즈 문제 조회 (힌트 포함) */
+  @Get('quiz/questions')
+  quizQuestions(@Request() req: any) {
+    return this.onboardingService.getQuizQuestions(req.user.id);
   }
 
-  /** Step 2: 진단퀴즈 답변 제출 */
-  @Post('step2')
-  step2Submit(@Request() req: any, @Body() dto: SubmitDiagnosticDto) {
-    return this.onboardingService.step2Submit(req.user.id, dto.answers);
+  /** 진단퀴즈 답변 제출 → 레벨 배정 + AI 마이북 생성 자동 시작 */
+  @Post('quiz/submit')
+  quizSubmit(@Request() req: any, @Body() dto: SubmitDiagnosticDto) {
+    return this.onboardingService.submitQuizAndGenerate(req.user.id, dto.answers);
   }
 
-  /** Step 3: 재무 데이터 입력 */
-  @Post('step3')
-  step3(@Request() req: any, @Body() dto: SubmitFinanceDataDto) {
-    return this.onboardingService.step3SubmitFinanceData(
-      req.user.id,
-      dto.financeData,
-      dto.courseExtraData,
-    );
+  /** AI 마이북 생성 상태 폴링 */
+  @Get('generation-status')
+  generationStatus(@Request() req: any) {
+    return this.onboardingService.getGenerationStatus(req.user.id);
   }
 
-  /** Step 4: AI 마이북 생성 시작 */
-  @Post('step4/generate')
-  step4Generate(@Request() req: any) {
-    return this.onboardingService.step4Generate(req.user.id);
-  }
-
-  /** Step 4: 생성 상태 폴링 */
-  @Get('step4/status')
-  step4Status(@Request() req: any) {
-    return this.onboardingService.step4Status(req.user.id);
-  }
-
-  /** Step 5: 온보딩 완료 */
-  @Post('step5/complete')
-  step5Complete(@Request() req: any) {
-    return this.onboardingService.step5Complete(req.user.id);
+  /** 온보딩 완료 */
+  @Post('complete')
+  complete(@Request() req: any) {
+    return this.onboardingService.completeOnboarding(req.user.id);
   }
 }

@@ -31,18 +31,17 @@ export class FinanceService {
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const isStale = new Date(profile.updated_at) < sixMonthsAgo;
 
-    // 계산값
+    // 고정비는 투자금 포함. 등급 계산 시 투자금은 자산 이동이므로 제외
     const monthlyInvestment = profile.monthly_investment || 0;
-    const monthlyExpense = profile.monthly_fixed_cost + (profile.monthly_variable_cost || 0);
-    const surplus = profile.monthly_income - monthlyExpense - monthlyInvestment;
+    const monthlyExpense = (profile.monthly_fixed_cost - monthlyInvestment) + (profile.monthly_variable_cost || 0);
+    const surplus = profile.monthly_income - profile.monthly_fixed_cost - (profile.monthly_variable_cost || 0);
     const investmentPeriod = (profile.retirement_age || 55) - profile.age;
     const vestingPeriod = (profile.pension_start_age || 65) - (profile.retirement_age || 55);
 
-    // 사용 가능 예산 (실수령액 - 고정비 - 투자액)
+    // 사용 가능 예산 (실수령액 - 고정비) — 고정비에 투자금 이미 포함
     const availableBudget = calculateVariableCost(
       profile.monthly_income,
       profile.monthly_fixed_cost,
-      monthlyInvestment,
     );
 
     return {
@@ -97,11 +96,11 @@ export class FinanceService {
     const pensionStartAge = dto.pensionStartAge ?? (current.pension_start_age || 65);
     const age = dto.age ?? current.age;
 
-    // 재계산
-    const monthlyExpense = monthlyFixedCost + monthlyVariableCost;
-    const surplus = monthlyIncome - monthlyExpense - monthlyInvestment;
-    const grade = calculateGrade(monthlyIncome, monthlyExpense);
-    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost, monthlyInvestment);
+    // 재계산 — 고정비는 투자금 포함, 등급 계산 시 투자금 제외
+    const monthlyExpenseForGrade = (monthlyFixedCost - monthlyInvestment) + monthlyVariableCost;
+    const surplus = monthlyIncome - monthlyFixedCost - monthlyVariableCost;
+    const grade = calculateGrade(monthlyIncome, monthlyExpenseForGrade);
+    const variableCost = calculateVariableCost(monthlyIncome, monthlyFixedCost);
 
     const updateData: Record<string, any> = {
       updated_at: new Date().toISOString(),
@@ -136,6 +135,7 @@ export class FinanceService {
         .eq('id', userId);
     }
 
+    const monthlyExpense = monthlyFixedCost + monthlyVariableCost;
     return {
       grade,
       monthlyExpense,

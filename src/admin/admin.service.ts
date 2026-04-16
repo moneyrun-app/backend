@@ -38,23 +38,32 @@ export class AdminService {
   async getQuizzes() {
     const { data, error } = await this.supabase.db
       .from('quizzes')
-      .select('id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category, created_at')
+      .select('id, quiz_code, question, choices, correct_answer, brief_explanation, detailed_explanation, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate, created_at')
       .order('created_at', { ascending: false });
 
     if (error) {
       throw new Error(`퀴즈 목록 조회 실패: ${error.message}`);
     }
 
+    const DIFFICULTY_LABELS: Record<number, string> = { 1: '초급', 2: '심화', 3: '마스터' };
+
     return {
       quizzes: (data || []).map((q: any) => ({
         id: q.id,
+        quizCode: q.quiz_code,
         question: q.question,
         choices: q.choices,
         correctAnswer: q.correct_answer,
         briefExplanation: q.brief_explanation,
         detailedExplanation: q.detailed_explanation,
+        hint: q.hint,
+        difficultyLevel: q.difficulty_level,
+        difficultyLabel: DIFFICULTY_LABELS[q.difficulty_level] || '초급',
         source: q.source,
         category: q.category,
+        totalAttempts: q.total_attempts || 0,
+        correctCount: q.correct_count || 0,
+        correctRate: q.correct_rate || 0,
         createdAt: q.created_at,
       })),
       total: (data || []).length,
