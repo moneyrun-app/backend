@@ -280,14 +280,13 @@ export class CourseService {
       return { status: 'not_found', progress: null };
     }
 
+    const defaultProgress = data.status === 'completed'
+      ? { step: '완료', percent: 100, chaptersDone: 5, totalChapters: 5 }
+      : { step: '대기 중', percent: 0, chaptersDone: 0, totalChapters: 0 };
+
     return {
       status: data.status,
-      progress: data.generation_progress || {
-        step: '대기 중',
-        percent: 0,
-        chaptersDone: 0,
-        totalChapters: 0,
-      },
+      progress: data.generation_progress || defaultProgress,
     };
   }
 

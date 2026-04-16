@@ -332,15 +332,17 @@ export class OnboardingService {
       generationProgress = purchase?.generation_progress || null;
     }
 
+    const status = progress?.generation_status || 'pending';
+
+    // status가 completed인데 progress가 없는 엣지 케이스 → 100%로 반환
+    const defaultProgress = status === 'completed'
+      ? { step: '완료', percent: 100, chaptersDone: 5, totalChapters: 5 }
+      : { step: '대기 중', percent: 0, chaptersDone: 0, totalChapters: 0 };
+
     return {
-      status: progress?.generation_status || 'pending',
+      status,
       purchaseId: progress?.generation_purchase_id || null,
-      progress: generationProgress || {
-        step: '대기 중',
-        percent: 0,
-        chaptersDone: 0,
-        totalChapters: 0,
-      },
+      progress: generationProgress || defaultProgress,
     };
   }
 
