@@ -25,16 +25,17 @@ export class DiagnosticService {
     }));
   }
 
-  /** 진단퀴즈 답변 채점 + 레벨 배정 */
+  /** 진단퀴즈 답변 채점 + 레벨 배정 + 오답 → wrong_notes 저장 */
   async evaluateAndAssignLevel(
+    userId: string,
     category: string,
     answers: Array<{ questionId: string; answer: number }>,
   ) {
-    // 문제 전체 조회 (정답 + 가중치)
+    // 문제 전체 조회 (정답 + 가중치 + 해설)
     const questionIds = answers.map((a) => a.questionId);
     const { data: questions, error } = await this.supabase.db
       .from('diagnostic_quizzes')
-      .select('id, correct_answer, difficulty_weight')
+      .select('id, correct_answer, difficulty_weight, brief_explanation')
       .in('id', questionIds);
 
     if (error || !questions || questions.length === 0) {
@@ -46,6 +47,7 @@ export class DiagnosticService {
     let totalWeight = 0;
     let earnedWeight = 0;
     let correctCount = 0;
+    const wrongAnswers: Array<{ questionId: string; userAnswer: number; explanation: string | null }> = [];
 
     for (const answer of answers) {
       const question = questionMap.get(answer.questionId);
@@ -57,7 +59,27 @@ export class DiagnosticService {
       if (answer.answer + 1 === question.correct_answer) {
         earnedWeight += question.difficulty_weight;
         correctCount++;
+      } else {
+        wrongAnswers.push({
+          questionId: answer.questionId,
+          userAnswer: answer.answer,
+          explanation: question.brief_explanation,
+        });
       }
+    }
+
+    // 오답 → wrong_notes 저장
+    if (wrongAnswers.length > 0) {
+      const rows = wrongAnswers.map((w) => ({
+        user_id: userId,
+        diagnostic_quiz_id: w.questionId,
+        user_answer: w.userAnswer,
+        detailed_explanation: w.explanation,
+      }));
+
+      await this.supabase.db
+        .from('wrong_notes')
+        .upsert(rows, { onConflict: 'user_id,diagnostic_quiz_id', ignoreDuplicates: true });
     }
 
     const scoreRatio = totalWeight > 0 ? earnedWeight / totalWeight : 0;
@@ -77,6 +99,7 @@ export class DiagnosticService {
       scoreRatio: Math.round(scoreRatio * 100),
       correctCount,
       totalCount: answers.length,
+      wrongQuestionIds: wrongAnswers.map((w) => w.questionId),
     };
   }
 }
