@@ -150,8 +150,9 @@ export class OnboardingService {
       throw new BadRequestException('Step 1을 먼저 완료해주세요.');
     }
 
-    // 채점 + 레벨 배정
+    // 채점 + 레벨 배정 + 오답 저장
     const result = await this.diagnosticService.evaluateAndAssignLevel(
+      userId,
       progress.selected_category,
       answers,
     );

@@ -566,7 +566,7 @@ export class QuizService {
     return date.toISOString().split('T')[0];
   }
 
-  /** 오답노트 목록 조회 */
+  /** 오답노트 목록 조회 (데일리 + 진단퀴즈 통합) */
   async getWrongNotes(userId: string) {
     const { data, error } = await this.supabase.db
       .from('wrong_notes')
@@ -574,7 +574,8 @@ export class QuizService {
         id,
         user_answer,
         created_at,
-        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category)
+        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category),
+        diagnostic_quiz:diagnostic_quizzes (id, question, choices, correct_answer, brief_explanation, category)
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
@@ -583,18 +584,24 @@ export class QuizService {
       throw new Error(`오답노트 조회 실패: ${error.message}`);
     }
 
-    return (data || []).map((n: any) => ({
-      id: n.id,
-      quizId: n.quiz?.id,
-      question: n.quiz?.question,
-      choices: n.quiz?.choices,
-      correctAnswer: n.quiz?.correct_answer,
-      userAnswer: n.user_answer,
-      briefExplanation: n.quiz?.brief_explanation,
-      detailedExplanation: n.quiz?.detailed_explanation,
-      source: n.quiz?.source,
-      category: n.quiz?.category,
-      createdAt: n.created_at,
-    }));
+    return (data || []).map((n: any) => {
+      const isDiagnostic = !!n.diagnostic_quiz;
+      const q = isDiagnostic ? n.diagnostic_quiz : n.quiz;
+
+      return {
+        id: n.id,
+        quizId: q?.id,
+        question: q?.question,
+        choices: q?.choices,
+        correctAnswer: q?.correct_answer,
+        userAnswer: n.user_answer,
+        briefExplanation: q?.brief_explanation,
+        detailedExplanation: isDiagnostic ? q?.brief_explanation : q?.detailed_explanation,
+        source: isDiagnostic ? '진단퀴즈' : q?.source,
+        category: q?.category,
+        type: isDiagnostic ? 'diagnostic' : 'daily',
+        createdAt: n.created_at,
+      };
+    });
   }
 }
