@@ -71,16 +71,26 @@ export class DiagnosticService {
 
     // 오답 → wrong_notes 저장
     if (wrongAnswers.length > 0) {
-      const rows = wrongAnswers.map((w) => ({
-        user_id: userId,
-        diagnostic_quiz_id: w.questionId,
-        user_answer: w.userAnswer,
-        detailed_explanation: w.explanation,
-      }));
+      for (const w of wrongAnswers) {
+        // 기존에 같은 진단퀴즈 오답이 있으면 스킵
+        const { data: existing } = await this.supabase.db
+          .from('wrong_notes')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('diagnostic_quiz_id', w.questionId)
+          .maybeSingle();
 
-      await this.supabase.db
-        .from('wrong_notes')
-        .upsert(rows, { onConflict: 'user_id,diagnostic_quiz_id', ignoreDuplicates: true });
+        if (!existing) {
+          await this.supabase.db
+            .from('wrong_notes')
+            .insert({
+              user_id: userId,
+              diagnostic_quiz_id: w.questionId,
+              user_answer: w.userAnswer,
+              detailed_explanation: w.explanation,
+            });
+        }
+      }
     }
 
     const scoreRatio = totalWeight > 0 ? earnedWeight / totalWeight : 0;

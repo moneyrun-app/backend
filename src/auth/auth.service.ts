@@ -165,9 +165,12 @@ export class AuthService {
   ) {
     const loginResult = await this.kakaoLogin(accessToken);
 
-    // pre-onboarding 데이터가 있고 신규 유저면 재무 프로필 저장
-    if (preOnboardingData && loginResult.user.isNewUser) {
+    // pre-onboarding 데이터가 있고 온보딩 미완료면 재무 프로필 저장
+    // (신규 유저뿐 아니라, signOut 후 재로그인하는 케이스도 처리)
+    if (preOnboardingData && !loginResult.user.hasCompletedOnboarding) {
       await this.savePreOnboardingData(loginResult.user.id as string, preOnboardingData);
+      // DB 업데이트된 닉네임을 응답에도 반영
+      loginResult.user.nickname = preOnboardingData.nickname;
     }
 
     return loginResult;
@@ -180,10 +183,10 @@ export class AuthService {
     const grade = calculateGrade(dto.monthlyIncome, monthlyExpenseForGrade);
     const variableCost = calculateVariableCost(dto.monthlyIncome, dto.monthlyFixedCost);
 
-    // finance_profiles 저장
+    // finance_profiles 저장 (중복 방지를 위해 upsert)
     await this.supabase.db
       .from('finance_profiles')
-      .insert({
+      .upsert({
         user_id: userId,
         age: dto.age,
         retirement_age: dto.retirementAge,
@@ -196,23 +199,22 @@ export class AuthService {
         variable_cost_weekly: variableCost.weekly,
         variable_cost_daily: variableCost.daily,
         grade,
-      });
+      }, { onConflict: 'user_id' });
 
-    // users 업데이트
+    // users 업데이트 (온보딩은 아직 미완료 — 레벨선택/퀴즈/마이북 생성 남음)
     await this.supabase.db
       .from('users')
       .update({
         nickname: dto.nickname,
-        has_completed_onboarding: true,
         onboarding_version: 4,
         updated_at: new Date().toISOString(),
       })
       .eq('id', userId);
 
-    // onboarding_progress 생성 (카테고리 저장 — 로그인 후 코스 선택에 사용)
+    // onboarding_progress 생성/업데이트 (카테고리 저장 — 로그인 후 코스 선택에 사용)
     await this.supabase.db
       .from('onboarding_progress')
-      .insert({
+      .upsert({
         user_id: userId,
         selected_category: dto.category,
         finance_data: {
@@ -227,7 +229,7 @@ export class AuthService {
         },
         current_step: 3, // 재무 데이터까지 완료
         updated_at: new Date().toISOString(),
-      });
+      }, { onConflict: 'user_id' });
 
     // 상세리포트 비동기 자동 생성 (머니레터에 표시)
     this.bookService.generateDetailedReport(userId, true).catch((err) => {

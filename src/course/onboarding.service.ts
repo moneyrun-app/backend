@@ -355,16 +355,16 @@ export class OnboardingService {
       .eq('user_id', userId)
       .maybeSingle();
 
-    if (progress?.generation_status !== 'completed') {
-      throw new BadRequestException('마이북 생성이 아직 완료되지 않았습니다.');
-    }
+    // 마이북 생성 중이어도 온보딩 완료 허용 (생성은 백그라운드 계속 진행)
 
     // 코스 제목 조회
-    const { data: course } = await this.supabase.db
-      .from('courses')
-      .select('title, level')
-      .eq('id', progress.course_id)
-      .single();
+    const { data: course } = progress?.course_id
+      ? await this.supabase.db
+          .from('courses')
+          .select('title, level')
+          .eq('id', progress.course_id)
+          .single()
+      : { data: null };
 
     // 닉네임 조회
     const { data: user } = await this.supabase.db
@@ -387,6 +387,16 @@ export class OnboardingService {
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', userId);
+
+    // users 테이블 온보딩 완료 처리
+    await this.supabase.db
+      .from('users')
+      .update({
+        has_completed_onboarding: true,
+        onboarding_version: 4,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
 
     return {
       complete: true,
