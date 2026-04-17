@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { QuizService } from './quiz.service';
+import { CourseService } from '../course/course.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AnswerQuizDto } from './dto/answer-quiz.dto';
@@ -9,13 +10,20 @@ const DIFFICULTY_LABELS: Record<number, string> = { 1: '초급', 2: '심화', 3:
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class QuizController {
-  constructor(private readonly quizService: QuizService) {}
+  constructor(
+    private readonly quizService: QuizService,
+    private readonly courseService: CourseService,
+  ) {}
 
   // ========== 오늘의 퀴즈 (독립 API) ==========
 
   @Get('quiz/today')
   async getTodayQuiz(@CurrentUser('id') userId: string) {
-    const quiz = await this.quizService.getTodayQuiz(userId);
+    const activeCourse = await this.courseService.getActiveCourse(userId);
+    const quiz = await this.quizService.getTodayQuiz(
+      userId,
+      activeCourse?.category || undefined,
+    );
     const { data: user } = await this.quizService.getUserLevel(userId);
     const level = user?.quiz_level || 1;
     return {

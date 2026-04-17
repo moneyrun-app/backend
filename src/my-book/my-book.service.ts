@@ -366,7 +366,7 @@ export class MyBookService {
     if (!type || type === 'quiz') {
       const { data: quizScraps } = await this.supabase.db
         .from('user_quiz_scraps')
-        .select('id, note, created_at, quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, category)')
+        .select('id, note, created_at, quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, course_category:course_categories!course_category_id(name))')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
@@ -379,7 +379,7 @@ export class MyBookService {
         correctAnswer: s.quiz?.correct_answer,
         briefExplanation: s.quiz?.brief_explanation,
         detailedExplanation: s.quiz?.detailed_explanation,
-        category: s.quiz?.category,
+        category: s.quiz?.course_category?.name || null,
         note: s.note,
         createdAt: s.created_at,
       }));
@@ -451,7 +451,7 @@ export class MyBookService {
 
     const { data: quizScraps } = await this.supabase.db
       .from('user_quiz_scraps')
-      .select('note, quiz:quizzes (question, brief_explanation, detailed_explanation, category)')
+      .select('note, quiz:quizzes (question, brief_explanation, detailed_explanation, course_category:course_categories!course_category_id(name))')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
@@ -475,7 +475,7 @@ export class MyBookService {
         question: s.quiz?.question,
         briefExplanation: s.quiz?.brief_explanation,
         detailedExplanation: s.quiz?.detailed_explanation,
-        category: s.quiz?.category,
+        category: s.quiz?.course_category?.name || null,
         note: s.note,
       })),
       totalCount: totalScraps,

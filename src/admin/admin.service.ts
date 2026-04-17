@@ -38,7 +38,7 @@ export class AdminService {
   async getQuizzes() {
     const { data, error } = await this.supabase.db
       .from('quizzes')
-      .select('id, quiz_code, question, choices, correct_answer, brief_explanation, detailed_explanation, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate, created_at')
+      .select('id, quiz_code, question, choices, correct_answer, brief_explanation, detailed_explanation, hint, difficulty_level, total_attempts, correct_count, correct_rate, created_at, course_category:course_categories!course_category_id(id, name)')
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -59,8 +59,7 @@ export class AdminService {
         hint: q.hint,
         difficultyLevel: q.difficulty_level,
         difficultyLabel: DIFFICULTY_LABELS[q.difficulty_level] || '초급',
-        source: q.source,
-        category: q.category,
+        category: q.course_category?.name || null,
         totalAttempts: q.total_attempts || 0,
         correctCount: q.correct_count || 0,
         correctRate: q.correct_rate || 0,

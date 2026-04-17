@@ -4,6 +4,10 @@ import { SupabaseService } from '../common/supabase/supabase.service';
 /** 난이도 매핑: 1=초급, 2=심화, 3=마스터 */
 const DIFFICULTY_LABELS: Record<number, string> = { 1: '초급', 2: '심화', 3: '마스터' };
 
+/** 퀴즈 본체 기본 SELECT (course_category join 포함) */
+const QUIZ_BASE_SELECT =
+  'id, quiz_code, question, choices, hint, difficulty_level, total_attempts, correct_count, correct_rate, course_category_id, course_category:course_categories!course_category_id(id, name)';
+
 @Injectable()
 export class QuizService {
   constructor(private readonly supabase: SupabaseService) {}
@@ -14,6 +18,36 @@ export class QuizService {
       .select('quiz_level')
       .eq('id', userId)
       .single();
+  }
+
+  /** 카테고리 이름 → ID 조회 (필터 최적화용) */
+  private async resolveCategoryId(name?: string): Promise<string | null> {
+    if (!name) return null;
+    const { data } = await this.supabase.db
+      .from('course_categories')
+      .select('id')
+      .eq('name', name)
+      .single();
+    return data?.id || null;
+  }
+
+  private mapQuiz(row: any, overrideSource?: string) {
+    const dl = row?.difficulty_level || 1;
+    const categoryName = row?.course_category?.name || null;
+    return {
+      id: row.id,
+      quizCode: row.quiz_code,
+      question: row.question,
+      choices: row.choices,
+      hint: row.hint,
+      difficultyLevel: dl,
+      difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
+      source: overrideSource || null,
+      category: categoryName,
+      totalAttempts: row.total_attempts || 0,
+      correctCount: row.correct_count || 0,
+      correctRate: row.correct_rate || 0,
+    };
   }
 
   /** 오늘의 퀴즈 1문제 (유저 레벨 기반, 코스 카테고리 필터) — 이미 풀었으면 null 반환 */
@@ -37,42 +71,29 @@ export class QuizService {
       .single();
 
     const level = user?.quiz_level || 1;
+    const courseCategoryId = await this.resolveCategoryId(courseCategory);
 
     // 30% 확률로 오답노트에서 재출제
     const useWrongNote = Math.random() < 0.3;
     if (useWrongNote) {
       const { data: wrongNotes } = await this.supabase.db
         .from('wrong_notes')
-        .select('quiz_id, quiz:quizzes (id, quiz_code, question, choices, hint, source, category, difficulty_level, course_category, total_attempts, correct_count, correct_rate)')
+        .select(`quiz_id, quiz:quizzes (${QUIZ_BASE_SELECT})`)
         .eq('user_id', userId)
+        .not('quiz_id', 'is', null)
         .limit(10);
 
-      let filteredNotes = wrongNotes || [];
-      if (courseCategory && filteredNotes.length > 0) {
+      let filteredNotes = (wrongNotes || []).filter((n: any) => n.quiz);
+      if (courseCategoryId && filteredNotes.length > 0) {
         const courseScopedNotes = filteredNotes.filter(
-          (n: any) => n.quiz?.course_category === courseCategory,
+          (n: any) => n.quiz?.course_category_id === courseCategoryId,
         );
         if (courseScopedNotes.length > 0) filteredNotes = courseScopedNotes;
       }
 
       if (filteredNotes.length > 0) {
         const pick = filteredNotes[Math.floor(Math.random() * filteredNotes.length)];
-        const q = pick.quiz as any;
-        const dl = q.difficulty_level || level;
-        return {
-          id: q.id,
-          quizCode: q.quiz_code,
-          question: q.question,
-          choices: q.choices,
-          hint: q.hint,
-          difficultyLevel: dl,
-          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
-          source: '오답노트 복습',
-          category: q.category,
-          totalAttempts: q.total_attempts || 0,
-          correctCount: q.correct_count || 0,
-          correctRate: q.correct_rate || 0,
-        };
+        return this.mapQuiz(pick.quiz, '오답노트 복습');
       }
     }
 
@@ -86,12 +107,11 @@ export class QuizService {
 
     let query = this.supabase.db
       .from('quizzes')
-      .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate')
+      .select(QUIZ_BASE_SELECT)
       .eq('difficulty_level', level);
 
-    // 코스 카테고리 필터
-    if (courseCategory) {
-      query = query.eq('course_category', courseCategory);
+    if (courseCategoryId) {
+      query = query.eq('course_category_id', courseCategoryId);
     }
 
     if (excludeIds.length > 0) {
@@ -101,13 +121,13 @@ export class QuizService {
     const { data: quizzes } = await query;
 
     if (!quizzes || quizzes.length === 0) {
-      // 해당 레벨+카테고리에 퀴즈가 없으면 카테고리만으로 재시도, 그래도 없으면 전체
+      // 레벨+카테고리 없으면 카테고리만, 그래도 없으면 전체
       let fallbackQuery = this.supabase.db
         .from('quizzes')
-        .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
+        .select(QUIZ_BASE_SELECT);
 
-      if (courseCategory) {
-        fallbackQuery = fallbackQuery.eq('course_category', courseCategory);
+      if (courseCategoryId) {
+        fallbackQuery = fallbackQuery.eq('course_category_id', courseCategoryId);
       }
 
       if (excludeIds.length > 0) {
@@ -116,11 +136,10 @@ export class QuizService {
 
       let { data: fallback } = await fallbackQuery;
 
-      // 코스 카테고리에도 퀴즈가 없으면 전체에서
-      if ((!fallback || fallback.length === 0) && courseCategory) {
+      if ((!fallback || fallback.length === 0) && courseCategoryId) {
         let allQuery = this.supabase.db
           .from('quizzes')
-          .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
+          .select(QUIZ_BASE_SELECT);
         if (excludeIds.length > 0) {
           allQuery = allQuery.not('id', 'in', `(${excludeIds.join(',')})`);
         }
@@ -131,39 +150,11 @@ export class QuizService {
       if (!fallback || fallback.length === 0) return null;
 
       const pick = fallback[Math.floor(Math.random() * fallback.length)];
-      const dl = pick.difficulty_level || 1;
-      return {
-        id: pick.id,
-        quizCode: pick.quiz_code,
-        question: pick.question,
-        choices: pick.choices,
-        hint: pick.hint,
-        difficultyLevel: dl,
-        difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
-        source: pick.source,
-        category: pick.category,
-        totalAttempts: pick.total_attempts || 0,
-        correctCount: pick.correct_count || 0,
-        correctRate: pick.correct_rate || 0,
-      };
+      return this.mapQuiz(pick);
     }
 
     const pick = quizzes[Math.floor(Math.random() * quizzes.length)];
-    const dl = pick.difficulty_level || level;
-    return {
-      id: pick.id,
-      quizCode: pick.quiz_code,
-      question: pick.question,
-      choices: pick.choices,
-      hint: pick.hint,
-      difficultyLevel: dl,
-      difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
-      source: pick.source,
-      category: pick.category,
-      totalAttempts: pick.total_attempts || 0,
-      correctCount: pick.correct_count || 0,
-      correctRate: pick.correct_rate || 0,
-    };
+    return this.mapQuiz(pick);
   }
 
   private getTodayKST(): string {
@@ -172,39 +163,27 @@ export class QuizService {
     return kst.toISOString().split('T')[0];
   }
 
-  /** 유저가 아직 안 푼 퀴즈 10개 배정 (오답 재출제 30% 포함) — 정답 미노출 */
+  /** 유저가 아직 안 푼 퀴즈 N개 배정 (오답 재출제 30% 포함) — 정답 미노출 */
   async getTodayQuizzes(userId: string, count = 10) {
     const result: any[] = [];
 
-    // 1. 오답노트에서 재출제 (30% = 3개)
+    // 1. 오답노트에서 재출제 (30%)
     const retryCount = Math.ceil(count * 0.3);
     const { data: wrongNotes } = await this.supabase.db
       .from('wrong_notes')
-      .select('id, quiz_id, quiz:quizzes (id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate)')
+      .select(`id, quiz_id, quiz:quizzes (${QUIZ_BASE_SELECT})`)
       .eq('user_id', userId)
+      .not('quiz_id', 'is', null)
       .limit(retryCount * 2);
 
     const retryQuizzes = (wrongNotes || [])
+      .filter((n: any) => n.quiz)
       .sort(() => Math.random() - 0.5)
       .slice(0, retryCount)
-      .map((n: any) => {
-        const dl = n.quiz?.difficulty_level || 1;
-        return {
-          id: n.quiz?.id,
-          quizCode: n.quiz?.quiz_code,
-          question: n.quiz?.question,
-          choices: n.quiz?.choices,
-          hint: n.quiz?.hint,
-          difficultyLevel: dl,
-          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
-          source: '오답노트 복습',
-          category: n.quiz?.category,
-          totalAttempts: n.quiz?.total_attempts || 0,
-          correctCount: n.quiz?.correct_count || 0,
-          correctRate: n.quiz?.correct_rate || 0,
-          wrongNoteId: n.id,
-        };
-      });
+      .map((n: any) => ({
+        ...this.mapQuiz(n.quiz, '오답노트 복습'),
+        wrongNoteId: n.id,
+      }));
 
     result.push(...retryQuizzes);
     const retryQuizIds = retryQuizzes.map((q: any) => q.id);
@@ -224,7 +203,7 @@ export class QuizService {
 
       let query = this.supabase.db
         .from('quizzes')
-        .select('id, quiz_code, question, choices, hint, source, category, difficulty_level, total_attempts, correct_count, correct_rate');
+        .select(QUIZ_BASE_SELECT);
 
       if (excludeIds.length > 0) {
         query = query.not('id', 'in', `(${excludeIds.join(',')})`);
@@ -233,26 +212,9 @@ export class QuizService {
       const { data: newQuizzes } = await query;
 
       const shuffled = (newQuizzes || []).sort(() => Math.random() - 0.5);
-      result.push(...shuffled.slice(0, remaining).map((q: any) => {
-        const dl = q.difficulty_level || 1;
-        return {
-          id: q.id,
-          quizCode: q.quiz_code,
-          question: q.question,
-          choices: q.choices,
-          hint: q.hint,
-          difficultyLevel: dl,
-          difficultyLabel: DIFFICULTY_LABELS[dl] || '초급',
-          source: q.source,
-          category: q.category,
-          totalAttempts: q.total_attempts || 0,
-          correctCount: q.correct_count || 0,
-          correctRate: q.correct_rate || 0,
-        };
-      }));
+      result.push(...shuffled.slice(0, remaining).map((q: any) => this.mapQuiz(q)));
     }
 
-    // 전체 셔플 — correct_answer, brief/detailed_explanation 절대 미포함
     return result.sort(() => Math.random() - 0.5);
   }
 
@@ -260,7 +222,7 @@ export class QuizService {
   async submitAnswer(userId: string, quizId: string, userAnswer: number) {
     const { data: quiz, error: quizError } = await this.supabase.db
       .from('quizzes')
-      .select('id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category')
+      .select('id, question, choices, correct_answer, brief_explanation, detailed_explanation, course_category:course_categories!course_category_id(name)')
       .eq('id', quizId)
       .single();
 
@@ -268,7 +230,6 @@ export class QuizService {
       throw new NotFoundException('퀴즈를 찾을 수 없습니다.');
     }
 
-    // 보기 범위 검증 (프론트: 0-indexed, DB: 1-indexed)
     const choiceCount = (quiz.choices as any[]).length;
     if (userAnswer < 0 || userAnswer >= choiceCount) {
       throw new BadRequestException(`보기는 0~${choiceCount - 1}번까지입니다.`);
@@ -277,7 +238,6 @@ export class QuizService {
     const dbAnswer = userAnswer + 1; // 0-indexed → 1-indexed
     const correct = dbAnswer === quiz.correct_answer;
 
-    // 재출제 퀴즈에서 맞추면 오답노트에서 삭제
     if (correct) {
       await this.supabase.db
         .from('wrong_notes')
@@ -286,7 +246,6 @@ export class QuizService {
         .eq('quiz_id', quizId);
     }
 
-    // 이미 답변했는지 확인 (재출제가 아닌 경우)
     const { data: existing } = await this.supabase.db
       .from('quiz_answers')
       .select('id')
@@ -305,7 +264,6 @@ export class QuizService {
         });
     }
 
-    // 틀렸으면 오답노트에 자동 저장
     let wrongNoteId: string | null = null;
     if (!correct) {
       const { data: existingNote } = await this.supabase.db
@@ -333,7 +291,7 @@ export class QuizService {
 
     return {
       correct,
-      correctAnswer: quiz.correct_answer - 1, // 1-indexed → 0-indexed
+      correctAnswer: quiz.correct_answer - 1,
       userAnswer,
       briefExplanation: quiz.brief_explanation,
       detailedExplanation: quiz.detailed_explanation,
@@ -347,7 +305,6 @@ export class QuizService {
     const result = await this.submitAnswer(userId, quizId, userAnswer);
     const today = this.getTodayKST();
 
-    // 출석 체크 (하루 1회)
     let attendanceChecked = false;
     const { data: existingAttendance } = await this.supabase.db
       .from('attendance_records')
@@ -368,13 +325,9 @@ export class QuizService {
       attendanceChecked = true;
     }
 
-    // 현재 스트릭 계산
     const streak = await this.calculateStreak(userId, today);
-
-    // 뱃지 체크 및 수여
     await this.checkAndAwardBadges(userId, streak, today);
 
-    // 난이도 제안
     const { data: user } = await this.supabase.db
       .from('users')
       .select('quiz_level')
@@ -413,7 +366,6 @@ export class QuizService {
     const today = this.getTodayKST();
     const currentStreak = await this.calculateStreak(userId, today);
 
-    // 최장 연속
     const { data: allRecords } = await this.supabase.db
       .from('attendance_records')
       .select('date')
@@ -438,7 +390,6 @@ export class QuizService {
     if (tempStreak > longestStreak) longestStreak = tempStreak;
     if (dates.length === 0) longestStreak = 0;
 
-    // 누적 + 이번 달
     const { count: totalDays } = await this.supabase.db
       .from('attendance_records')
       .select('id', { count: 'exact', head: true })
@@ -452,7 +403,6 @@ export class QuizService {
       .gte('date', monthStart)
       .lte('date', today);
 
-    // 뱃지
     const { data: badges } = await this.supabase.db
       .from('user_badges')
       .select('badge:badges (code, name, icon), earned_at')
@@ -587,7 +537,6 @@ export class QuizService {
 
       if (!badge) continue;
 
-      // 이미 수여했는지 확인
       const { data: existing } = await this.supabase.db
         .from('user_badges')
         .select('id')
@@ -622,8 +571,8 @@ export class QuizService {
         id,
         user_answer,
         created_at,
-        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, source, category),
-        diagnostic_quiz:diagnostic_quizzes (id, question, choices, correct_answer, brief_explanation, category)
+        quiz:quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, course_category:course_categories!course_category_id(name)),
+        diagnostic_quiz:diagnostic_quizzes (id, question, choices, correct_answer, brief_explanation, detailed_explanation, course_category:course_categories!course_category_id(name))
       `)
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
@@ -635,6 +584,7 @@ export class QuizService {
     return (data || []).map((n: any) => {
       const isDiagnostic = !!n.diagnostic_quiz;
       const q = isDiagnostic ? n.diagnostic_quiz : n.quiz;
+      const category = q?.course_category?.name || null;
 
       return {
         id: n.id,
@@ -644,9 +594,9 @@ export class QuizService {
         correctAnswer: q?.correct_answer,
         userAnswer: n.user_answer,
         briefExplanation: q?.brief_explanation,
-        detailedExplanation: isDiagnostic ? q?.brief_explanation : q?.detailed_explanation,
-        source: isDiagnostic ? '진단퀴즈' : q?.source,
-        category: q?.category,
+        detailedExplanation: q?.detailed_explanation || q?.brief_explanation,
+        source: isDiagnostic ? '진단퀴즈' : '데일리',
+        category,
         type: isDiagnostic ? 'diagnostic' : 'daily',
         createdAt: n.created_at,
       };

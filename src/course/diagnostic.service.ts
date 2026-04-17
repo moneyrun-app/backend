@@ -1,16 +1,32 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../common/supabase/supabase.service';
 
 @Injectable()
 export class DiagnosticService {
   constructor(private readonly supabase: SupabaseService) {}
 
+  /** 카테고리 이름 → ID */
+  private async resolveCategoryId(name: string): Promise<string> {
+    const { data, error } = await this.supabase.db
+      .from('course_categories')
+      .select('id')
+      .eq('name', name)
+      .single();
+
+    if (error || !data) {
+      throw new NotFoundException(`카테고리를 찾을 수 없습니다: ${name}`);
+    }
+    return data.id;
+  }
+
   /** 카테고리별 진단퀴즈 10문제 조회 (힌트 포함) */
   async getQuestions(category: string) {
+    const categoryId = await this.resolveCategoryId(category);
+
     const { data: questions, error } = await this.supabase.db
       .from('diagnostic_quizzes')
-      .select('id, question, choices, correct_answer, difficulty_weight, brief_explanation, hint')
-      .eq('category', category)
+      .select('id, question, choices, correct_answer, difficulty_weight, brief_explanation, detailed_explanation, hint')
+      .eq('course_category_id', categoryId)
       .order('difficulty_weight', { ascending: true })
       .limit(10);
 
@@ -26,17 +42,19 @@ export class DiagnosticService {
     }));
   }
 
-  /** 진단퀴즈 답변 채점 + 레벨 배정 + 오답 → wrong_notes 저장 */
+  /** 진단퀴즈 답변 채점 + 레벨 배정 + 오답 → wrong_notes 저장
+   *  레벨 배정: 가중점수(difficulty_weight) 비율 기준
+   *    ≤30% 기초 / ≤70% 심화 / >70% 마스터
+   */
   async evaluateAndAssignLevel(
     userId: string,
     category: string,
     answers: Array<{ questionId: string; answer: number }>,
   ) {
-    // 문제 전체 조회 (정답 + 가중치 + 해설)
     const questionIds = answers.map((a) => a.questionId);
     const { data: questions, error } = await this.supabase.db
       .from('diagnostic_quizzes')
-      .select('id, correct_answer, difficulty_weight, brief_explanation')
+      .select('id, correct_answer, difficulty_weight, brief_explanation, detailed_explanation')
       .in('id', questionIds);
 
     if (error || !questions || questions.length === 0) {
@@ -56,7 +74,6 @@ export class DiagnosticService {
 
       totalWeight += question.difficulty_weight;
 
-      // answer는 0-indexed, correct_answer는 1-indexed
       if (answer.answer + 1 === question.correct_answer) {
         earnedWeight += question.difficulty_weight;
         correctCount++;
@@ -64,15 +81,13 @@ export class DiagnosticService {
         wrongAnswers.push({
           questionId: answer.questionId,
           userAnswer: answer.answer,
-          explanation: question.brief_explanation,
+          explanation: question.detailed_explanation || question.brief_explanation,
         });
       }
     }
 
-    // 오답 → wrong_notes 저장
     if (wrongAnswers.length > 0) {
       for (const w of wrongAnswers) {
-        // 기존에 같은 진단퀴즈 오답이 있으면 스킵
         const { data: existing } = await this.supabase.db
           .from('wrong_notes')
           .select('id')
@@ -95,11 +110,11 @@ export class DiagnosticService {
 
     const scoreRatio = totalWeight > 0 ? earnedWeight / totalWeight : 0;
 
-    // 레벨 배정 — 정답 수 기준
+    // 가중점수 비율 기준 레벨 배정
     let assignedLevel: string;
-    if (correctCount <= 4) {
+    if (scoreRatio <= 0.3) {
       assignedLevel = '기초';
-    } else if (correctCount <= 6) {
+    } else if (scoreRatio <= 0.7) {
       assignedLevel = '심화';
     } else {
       assignedLevel = '마스터';

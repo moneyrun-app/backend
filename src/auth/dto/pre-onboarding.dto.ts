@@ -5,7 +5,7 @@ export class PreOnboardingDto {
   nickname: string;
 
   @IsString()
-  @IsIn(['연금', '주식', '부동산', '세금_연말정산', '소비_저축'])
+  @IsIn(['예적금', '연금', '주식', '부동산', '세금', '소비'])
   category: string;
 
   @IsInt()
